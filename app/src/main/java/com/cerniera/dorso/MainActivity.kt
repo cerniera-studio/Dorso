@@ -115,7 +115,7 @@ class MainActivity : Activity() {
         busy = true
         say("Fetching the page…")
         Thread {
-            val r = Fetch.article(url)
+            val r = Fetch.article(this, url)
             main.post {
                 busy = false
                 val a = r.article

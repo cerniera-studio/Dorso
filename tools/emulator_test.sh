@@ -71,6 +71,26 @@ adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2
 adb exec-out screencap -p > shot-shelf-after.png
 
+# A real Medium link, shared in. Medium answers a plain download with 403 (Cloudflare), so this
+# goes through the hidden browser. A data-centre runner can be challenged harder than a phone, so a
+# miss is a warning; a crash still fails the run.
+MEDIUM="https://medium.com/change-your-mind/doing-nothing-09c8f365bff1"
+adb shell am start -W -n $PKG/.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$MEDIUM" >/dev/null
+got=""
+for i in $(seq 1 25); do
+  sleep 2
+  got=$(adb shell run-as $PKG sh -c 'grep -l "09c8f365bff1" files/reads/*.json' 2>/dev/null | head -1)
+  [ -n "$got" ] && break
+done
+adb exec-out screencap -p > shot-medium.png
+if [ -n "$got" ]; then
+  words=$(adb shell run-as $PKG cat "$got" | python3 -c "import json,sys; a=json.load(sys.stdin); print(a.get('title',''), '|', sum(len(b.get('t','').split()) for b in a.get('blocks',[])), 'words')" 2>/dev/null)
+  echo "::notice::Medium read saved: $words"
+else
+  echo "::warning::Medium read not saved within 50 s (see shot-medium.png)"
+fi
+adb shell input keyevent KEYCODE_BACK; sleep 1
+
 if crashed; then echo "::error::Dorso crashed"; fail=1; fi
 { echo "Dorso log"; adb logcat -d -s AndroidRuntime:E; } > app-log.txt
 adb shell wm size reset; adb shell wm density reset

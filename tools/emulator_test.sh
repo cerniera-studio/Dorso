@@ -86,8 +86,8 @@ drag() {  # name y x-from x-hold x-to want(+/-)
 drag cover-forward 900 690 380 90 +
 drag cover-back 900 20 300 650 -
 size 1503 1568; sleep 2
-drag main-forward 800 1450 900 120 +
 drag main-back 800 60 620 1400 -
+drag main-forward 800 1450 900 120 +
 size 719 1680; sleep 2
 adb shell input tap 360 60; sleep 1
 adb exec-out screencap -p > shot-trim.png

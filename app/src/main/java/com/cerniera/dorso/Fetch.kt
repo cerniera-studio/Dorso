@@ -1,5 +1,6 @@
 package com.cerniera.dorso
 
+import android.content.Context
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -22,9 +23,29 @@ object Fetch {
     /** The first web link in shared text ("Title https://…" from most apps). */
     fun linkIn(text: String?): String? = text?.let { Regex("""https?://\S+""").find(it)?.value?.trimEnd('.', ',', ')', '"', '\'') }
 
-    fun article(url: String): Result {
-        val (finalUrl, html) = runCatching { download(url) }.getOrElse { return Result(null, "Couldn't reach the page (${it.javaClass.simpleName}: ${it.message ?: "no detail"}).") }
+    /** A site that turned the download away (Cloudflare's 403, a rate limit), as opposed to one that isn't there. */
+    class Refused(val code: Int) : Exception("the site answered $code")
+
+    /**
+     * A plain download first (quick, no JavaScript); if the site refuses it, as Medium does, the
+     * same page through [Browser], which passes the check the way Chrome does. Call off the main thread.
+     */
+    fun article(context: Context, url: String): Result {
+        val page = runCatching { download(url) }.recoverCatching { e ->
+            if (e is Refused && e.code in REFUSALS) Browser.page(context, url).let { it.url to it.html } else throw e
+        }
+        val (finalUrl, html) = page.getOrElse { return Result(null, problem(it)) }
         return parse(finalUrl, html)
+    }
+
+    private val REFUSALS = setOf(401, 403, 429, 503)
+
+    private fun problem(e: Throwable): String = when {
+        e is Refused && e.code == 404 -> "That page isn't there (the site answered 404)."
+        e is Refused -> "The site turned Dorso away (it answered ${e.code})."
+        e is java.net.UnknownHostException -> "Couldn't reach the site: check the connection."
+        e is java.net.SocketTimeoutException -> "The site took too long to answer."
+        else -> "Couldn't reach the page (${e.message ?: e.javaClass.simpleName})."
     }
 
     fun parse(url: String, html: String): Result {
@@ -54,7 +75,7 @@ object Fetch {
                 val loc = c.getHeaderField("Location") ?: error("redirect with no address")
                 url = URL(URL(url), loc).toString(); c.disconnect(); return@repeat
             }
-            if (code >= 400) error("the site answered $code")
+            if (code >= 400) { c.disconnect(); throw Refused(code) }
             val cs = c.contentType?.substringAfter("charset=", "")?.substringBefore(';')?.trim()?.ifBlank { null } ?: "UTF-8"
             val body = c.inputStream.use { it.readBytes() }.toString(runCatching { charset(cs) }.getOrDefault(Charsets.UTF_8))
             c.disconnect()

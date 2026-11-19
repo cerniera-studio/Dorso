@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dorso: an open book, the crease its spine. The ribbon marking your place is the one champagne element. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#FFF6F1E6" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M54,44 C46,38 34,37 26,40 L26,72 C34,69 46,70 54,76"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFF6F1E6" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M54,44 C62,38 74,37 82,40 L82,72 C74,69 62,70 54,76"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFF6F1E6" android:strokeWidth="1.6" android:strokeLineCap="round" android:pathData="M54,44 L54,76"/>
+    <path android:pathData="M52.2,75 L55.8,75 L55.8,86 L54,83.6 L52.2,86 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="50" android:startY="74" android:endX="58" android:endY="86">
+                <item android:offset="0" android:color="#FFF7E6C2"/>
+                <item android:offset="1" android:color="#FFB8995F"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

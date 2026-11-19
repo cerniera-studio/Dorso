@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The same glyph in one colour: lines stroked, the ribbon filled -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#FF000000" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M54,44 C46,38 34,37 26,40 L26,72 C34,69 46,70 54,76"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FF000000" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M54,44 C62,38 74,37 82,40 L82,72 C74,69 62,70 54,76"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FF000000" android:strokeWidth="1.6" android:strokeLineCap="round" android:pathData="M54,44 L54,76"/>
+    <path android:fillColor="#FF000000" android:pathData="M52.2,75 L55.8,75 L55.8,86 L54,83.6 L52.2,86 Z"/>
+</vector>

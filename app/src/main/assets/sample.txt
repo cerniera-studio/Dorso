@@ -1,0 +1,31 @@
+# The spine
+## Cerniera · Dorso
+A book is two pages held open by a spine. Everything else about it, the paper, the type, the weight in the hand, follows from that one fact. The eye reads down one page, crosses the gutter without noticing, and carries on down the next. The gutter is never read. It is simply where the book bends.
+
+For most of the last twenty years we have read long things on glass that does not bend, and the glass has taught us to scroll. Scrolling is good for a feed. It is less good for an argument that takes forty minutes to make, because nothing on a scrolling page tells you where you are. There is no left page and right page, no folio at the foot, no sense that the thing in your hands has a shape. You keep your place with your thumb, and when the thumb lets go the place is gone.
+
+A folding phone gives the spine back. Opened, the glass has a crease down the middle, and the crease is exactly where a book would bend. Most apps ignore it. They lay a single column across both halves, so lines run far too long for comfortable reading, or they let the text run straight under the hinge, where it catches the light. A few go further and put the camera hole on top of a word.
+
+## Setting a page
+Dorso does the opposite. It treats the crease as the spine and sets the article as a spread: one page on each side, a gutter wider than the crease itself, so no word ever sits on the fold. Each page has its own margins, a running head at the top and a number at the foot. Lines are justified and hyphenated, as in a printed book, and paragraphs are marked by an indent rather than a gap, which keeps the page quiet.
+
+The measure, the length of a line, matters more than anything else. Somewhere between fifty and seventy-five characters the eye moves easily from the end of one line to the start of the next. Much longer and it loses its way on the return; much shorter and the reading turns choppy. On the main screen each page sits comfortably inside that range. On the cover screen, which is tall and narrow, there is room for one page, and the type is set for it alone.
+
+Turn the cover screen on its side and it becomes short and wide. A single line across it would run the full width of the glass, so Dorso splits it into two short pages instead, like a pocket book held sideways.
+
+## Keeping your place
+A reader on a folding phone changes shape constantly. You start on the cover on the bus, open the phone when you sit down, turn it when you lie back on the sofa. Each change gives the text a different width, and a different width means different lines and different pages. Most apps keep your place as a percentage, or as a scroll position, and both drift as the shape changes: you open the phone and find yourself a paragraph further on, or a paragraph back.
+
+Dorso keeps your place as a sentence. More exactly, it remembers the line you were reading and the character that starts it. When the shape changes, the pages are cut again from that line, so it is always the first line of the left page. Fold, unfold or turn the phone in the middle of a paragraph, and the words you were reading are waiting at the top left of the spread.
+
+## What stays hidden
+There is no toolbar. A book does not have one, and a toolbar on a page is one more thing for the eye to skip. Touch the top edge of the glass and a slim bar rises with the type size and the way back to your shelf; leave it, and after a few seconds it sinks again. Touch the spine itself and the book closes.
+
+Turn the pages slowly and the running heads and page numbers stay. Flick quickly through a chapter and they fall away, leaving only the text, then return when you stop. Speed empties the page; stillness fills it again.
+
+## Where the reading comes from
+Dorso does not browse. You find things where you already find them, in Medium, The Athletic, Reddit or the browser, and share them to Dorso. It fetches the page, keeps the article and drops the rest: the menus, the related links, the advertising, the invitation to subscribe. What is left is kept on the phone, so it reads the same on a train with no signal.
+
+Some of what you read sits behind a sign-in. For now, those pages arrive as their public teaser, and Dorso says so. Reading them through your own session is the next thing to build.
+
+A book is two pages held open by a spine. This one happens to be made of glass.

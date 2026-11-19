@@ -44,10 +44,6 @@ class ReaderActivity : Activity() {
         Kit.follow(this)
         window.setDecorFitsSystemWindows(false)
         window.statusBarColor = 0; window.navigationBarColor = 0
-        window.insetsController?.let {
-            it.hide(WindowInsets.Type.systemBars())
-            it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
         val id = intent.getStringExtra(EXTRA_ID)
         val a = id?.let { Store.get(this, it) } ?: run { finish(); return }
         article = a
@@ -81,6 +77,11 @@ class ReaderActivity : Activity() {
             insets
         }
         setContentView(root)
+        // Only once the window has its content: before that the decor view doesn't exist yet
+        window.insetsController?.let {
+            it.hide(WindowInsets.Type.systemBars())
+            it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         reader.show(a)
     }
 

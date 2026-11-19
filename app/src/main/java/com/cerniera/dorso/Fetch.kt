@@ -55,8 +55,8 @@ object Fetch {
                 url = URL(URL(url), loc).toString(); c.disconnect(); return@repeat
             }
             if (code >= 400) error("the site answered $code")
-            val charset = c.contentType?.substringAfter("charset=", "")?.substringBefore(';')?.trim()?.ifBlank { null } ?: "UTF-8"
-            val body = c.inputStream.use { it.readBytes() }.toString(charset(charset))
+            val cs = c.contentType?.substringAfter("charset=", "")?.substringBefore(';')?.trim()?.ifBlank { null } ?: "UTF-8"
+            val body = c.inputStream.use { it.readBytes() }.toString(runCatching { charset(cs) }.getOrDefault(Charsets.UTF_8))
             c.disconnect()
             return url to body
         }

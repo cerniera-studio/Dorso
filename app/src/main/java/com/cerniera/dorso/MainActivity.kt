@@ -153,7 +153,7 @@ class MainActivity : Activity() {
     }
 
     private fun remove(a: Article) {
-        Sheet.show(this, a.title, action = "Remove" to { s -> Store.remove(this, a.id); s.dismiss(); fill() }) { s ->
+        Sheet.show(this, a.title, action = "Remove" to { s: Sheet -> Store.remove(this, a.id); s.dismiss(); fill() }) { s ->
             s.body.addView(text("Take this read off the shelf? Your place in it goes too.", 14.5f, Kit.MUTED))
         }
     }

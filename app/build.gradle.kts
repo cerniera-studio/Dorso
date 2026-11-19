@@ -60,7 +60,7 @@ dependencies {
     implementation("androidx.core:core:1.13.1")
     // The clean text of a page: a Kotlin port of Mozilla's Readability, on jsoup
     implementation("net.dankito.readability4j:readability4j:1.0.8")
-    implementation("org.jsoup:jsoup:1.18.1")
+    implementation("org.jsoup:jsoup:1.13.1")
 }
 
 // Pagination's tests run on the JVM: gradle :app:testDebugUnitTest

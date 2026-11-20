@@ -118,7 +118,7 @@ adb shell am start -W -n $PKG/.MainActivity -a android.intent.action.SEND -t tex
 got=""
 for i in $(seq 1 40); do
   sleep 2
-  got=$(adb shell "run-as $PKG sh -c 'grep -l Medium files/reads/*.json'" 2>/dev/null | tr -d '\r' | head -1)
+  got=$(adb shell "run-as $PKG sh -c 'grep -l medium.com files/reads/*.json'" 2>/dev/null | tr -d '\r' | head -1)
   [ -n "$got" ] && break
 done
 adb exec-out screencap -p > shot-medium.png

@@ -37,5 +37,11 @@
             android:name=".ReaderActivity"
             android:exported="false"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|density|keyboardHidden" />
+        <!-- Signing in to a site you subscribe to, inside Dorso -->
+        <activity
+            android:name=".SignInActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|density|keyboardHidden" />
     </application>
 </manifest>

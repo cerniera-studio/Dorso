@@ -116,19 +116,28 @@ adb exec-out screencap -p > shot-shelf-after.png
 MEDIUM="https://medium.com/change-your-mind/doing-nothing-09c8f365bff1"
 adb shell am start -W -n $PKG/.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$MEDIUM" >/dev/null
 got=""
-for i in $(seq 1 25); do
+for i in $(seq 1 40); do
   sleep 2
-  got=$(adb shell run-as $PKG sh -c 'grep -l medium.com files/reads/*.json' 2>/dev/null | head -1)
+  got=$(adb shell "run-as $PKG sh -c 'grep -l medium.com files/reads/*.json'" 2>/dev/null | tr -d '\r' | head -1)
   [ -n "$got" ] && break
 done
 adb exec-out screencap -p > shot-medium.png
 if [ -n "$got" ]; then
-  words=$(adb shell run-as $PKG cat "$got" | python3 -c "import json,sys; a=json.load(sys.stdin); print(a.get('title',''), '|', sum(len(b.get('t','').split()) for b in a.get('blocks',[])), 'words')" 2>/dev/null)
+  words=$(adb shell "run-as $PKG cat $got" | python3 -c "import json,sys; a=json.load(sys.stdin); print(a.get('title',''), '|', sum(len(b.get('t','').split()) for b in a.get('blocks',[])), 'words')" 2>/dev/null)
   echo "::notice::Medium read saved: $words"
 else
-  echo "::warning::Medium read not saved within 50 s (see shot-medium.png)"
+  echo "::warning::Medium read not saved within 80 s (see shot-medium.png)"
 fi
 adb shell input keyevent KEYCODE_BACK; sleep 1
+
+# Signing in: the shelf lists the accounts; the New York Times sign-in page opens inside Dorso
+adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 3
+adb shell input swipe 360 1400 360 300 300; sleep 1
+adb exec-out screencap -p > shot-accounts.png
+adb shell am start -W -n $PKG/.MainActivity --es signin nyt >/dev/null; sleep 10
+adb exec-out screencap -p > shot-signin.png
+if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "::notice::sign-in page opened"; else echo "::warning::sign-in page not in front"; fi
+adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 
 if crashed; then echo "::error::Dorso crashed"; fail=1; fi
 { echo "Dorso log"; adb logcat -d -s AndroidRuntime:E; } > app-log.txt

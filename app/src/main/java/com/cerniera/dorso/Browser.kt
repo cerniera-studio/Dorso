@@ -64,6 +64,8 @@ object Browser {
                 w.evaluateJavascript(READY_JS) { raw ->
                     val s = runCatching { JSONArray("[$raw]").optString(0, "") }.getOrDefault("")
                     if (s.isNotEmpty()) {
+                        // Read as soon as the page is ready: waiting longer let Medium's page move on
+                        // to another story before it was read (seen twice in the emulator walk)
                         out = Result(s.substringBefore('\n'), s.substringAfter('\n'))
                         done.countDown()
                     } else main.postDelayed({ poll() }, POLL_MS)

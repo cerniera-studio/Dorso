@@ -72,7 +72,8 @@ object Jacket {
         val col = (w - 2 * margin).toInt()
 
         // Author, large and spaced
-        val name = (a.byline.ifBlank { a.site.ifBlank { "Dorso" } }).uppercase().let(::clean)
+        // A name with a separator breaks at it, never leaving the dot alone on a line
+        val name = (a.byline.ifBlank { a.site.ifBlank { "Dorso" } }).uppercase().let(::clean).replace(Regex("""\s*[·|•]\s*"""), "\n")
         val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = Kit.display(ctx); color = ink; letterSpacing = .2f
             textSize = fit(name, this, col, w * .135f, w * .075f, 2)
@@ -314,9 +315,15 @@ object Jacket {
         // The weave: fine threads both ways, each a shade lighter or darker than the cloth
         val p = Paint(); p.strokeWidth = .9f * dp
         var x = 0f
-        while (x < w) { p.color = withAlpha(if (r.nextBoolean()) 0xFFFFFF else 0x000000, .025f + .04f * r.nextFloat()); c.drawLine(x, 0f, x, h.toFloat(), p); x += 1.3f * dp }
+        while (x < w) { p.color = withAlpha(if (r.nextBoolean()) 0xFFFFFF else 0x000000, .012f + .018f * r.nextFloat()); c.drawLine(x, 0f, x, h.toFloat(), p); x += 1.1f * dp }
         var y = 0f
-        while (y < h) { p.color = withAlpha(if (r.nextBoolean()) 0xFFFFFF else 0x000000, .025f + .045f * r.nextFloat()); c.drawLine(0f, y, w.toFloat(), y, p); y += 1.3f * dp }
+        while (y < h) { p.color = withAlpha(if (r.nextBoolean()) 0xFFFFFF else 0x000000, .012f + .02f * r.nextFloat()); c.drawLine(0f, y, w.toFloat(), y, p); y += 1.1f * dp }
+        // The cloth's own slubs: a scatter of tiny thicker threads
+        repeat((w * h / (240 * dp * dp)).toInt().coerceAtMost(4000)) {
+            p.color = withAlpha(if (r.nextBoolean()) 0xFFFFFF else 0x000000, .05f)
+            val sx = r.nextFloat() * w; val sy = r.nextFloat() * h; val l = (2f + 3f * r.nextFloat()) * dp
+            if (r.nextBoolean()) c.drawLine(sx, sy, sx + l, sy, p) else c.drawLine(sx, sy, sx, sy + l, p)
+        }
         // The joint: the board's hinge groove near the spine
         p.strokeWidth = 2.2f * dp; p.color = withAlpha(0x000000, .35f); c.drawLine(w * .055f, 0f, w * .055f, h.toFloat(), p)
         p.strokeWidth = 1f * dp; p.color = withAlpha(0xFFFFFF, .08f); c.drawLine(w * .055f + 2.5f * dp, 0f, w * .055f + 2.5f * dp, h.toFloat(), p)
@@ -376,7 +383,7 @@ object Jacket {
         val pal = palettes[Math.floorMod(a.title.hashCode() / 7, palettes.size)]
         // The marbling: combed bands of colour, pulled about by layered swirls (domain warping),
         // drawn small and laid over the board smoothly
-        val bw = 220; val bh = (bw * h / w.toFloat()).toInt().coerceAtLeast(1)
+        val bw = 420; val bh = (bw * h / w.toFloat()).toInt().coerceAtLeast(1)
         val px = IntArray(bw * bh)
         val f = FloatArray(6) { 1.5f + 5f * r.nextFloat() }; val ph = FloatArray(6) { 6.28f * r.nextFloat() }
         for (j in 0 until bh) for (i in 0 until bw) {

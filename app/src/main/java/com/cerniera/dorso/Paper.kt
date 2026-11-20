@@ -36,5 +36,11 @@ class Paper(context: Context) {
         pool.play(takes[i], volume, volume, 1, 0, rate)
     }
 
+    /** The jacket opening: the same paper, heavier and slower, as a board cover is. */
+    fun cover() {
+        if (!on || audio?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+        pool.play(takes[Random.nextInt(takes.size)], .7f, .7f, 1, 0, .76f + Random.nextFloat() * .06f)
+    }
+
     fun release() = pool.release()
 }

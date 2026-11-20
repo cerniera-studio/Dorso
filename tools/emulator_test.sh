@@ -89,6 +89,22 @@ size 1503 1568; sleep 2
 drag main-back 800 60 620 1400 -
 drag main-forward 800 1450 900 120 +
 size 719 1680; sleep 2
+
+# Folding shut: the book closes and the jacket shows. Take its edge and open it (held part way,
+# photographed): past halfway it opens onto the page you were on, which must not have moved.
+closedq() { layout | python3 -c "import json,sys; print(json.load(sys.stdin).get('closed'))"; }
+adb exec-out screencap -p > shot-jacket.png
+if [ "$(closedq)" = "True" ]; then echo "::notice::folded shut: the jacket shows"; else echo "::error::folding shut did not close the book"; fail=1; fi
+b=$(offset)
+adb shell input motionevent DOWN 690 1300
+for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 690 - 70 * i )) $(( 1300 - 50 * i )); done
+sleep 0.4; adb exec-out screencap -p > shot-jacket-opening.png
+adb shell input motionevent MOVE 40 1000
+adb shell input motionevent UP 40 1000
+sleep 1.6
+adb exec-out screencap -p > shot-jacket-open.png
+if [ "$(closedq)" = "False" ] && [ "$(offset)" = "$b" ]; then echo "::notice::jacket opened onto the same page"; else echo "::error::jacket did not open cleanly (closed=$(closedq), offset $b -> $(offset))"; fail=1; fi
+if crashed; then echo "::error::crash opening the jacket"; fail=1; fi
 adb shell input tap 360 60; sleep 1
 adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2

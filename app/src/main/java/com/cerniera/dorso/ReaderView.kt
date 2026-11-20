@@ -52,6 +52,9 @@ import org.json.JSONObject
  *   ever sits under the hinge. If the crease runs across (main screen turned, or the phone half
  *   folded that way), one page above it and one below.
  * - Text never sits under the camera hole: a page it would touch starts below it.
+ * - The jacket: on the cover screen the book is shut (when it opens there, or when the phone folds
+ *   shut under it), showing its printed jacket ([Jacket]). Tap it or take its edge and it opens on
+ *   the same leaf as the pages, onto the endpaper and then your page. Unfolded, it lies open.
  *
  * Where you are is a character: the one that starts the line you were reading. After any fold, turn
  * or type size, the pages are cut afresh so that line starts the left page ([Pager]).
@@ -118,6 +121,13 @@ class ReaderView(c: Context) : View(c) {
 
     /** The sound of the paper, played as a page goes over. */
     var paper: Paper? = null
+
+    // ---- The jacket: on the cover screen the book is shut, until you open it
+    /** True while the jacket is showing. Shut when the book opens on the cover screen or the phone folds shut. */
+    var closed = false; private set
+    private var lastSw = -1
+    private var fromJacket = false
+    private var jacketBmp: Bitmap? = null
     private var lastTurnAt = 0L
     private var chromeAlpha = 1f
     private var chromeAnim: ValueAnimator? = null
@@ -291,6 +301,14 @@ class ReaderView(c: Context) : View(c) {
         spread = Pager.spreadOf(spreads, anchorPage)
         offset = lay.getLineStart(starts[anchorPage])
         settleNow()
+        // The book shuts when it opens on the cover screen, or when the phone folds shut under it;
+        // unfolded (or the cover turned sideways) it lies open
+        val sw = resources.configuration.smallestScreenWidthDp
+        if (lastSw < 0) closed = mode == Mode.SINGLE && sw < 600
+        else if (lastSw >= 600 && sw < 600) closed = true
+        if (mode != Mode.SINGLE) closed = false
+        lastSw = sw
+        jacketBmp = null
         record(colW, sizePx)
         invalidate()
     }
@@ -300,7 +318,11 @@ class ReaderView(c: Context) : View(c) {
     override fun onDraw(c: Canvas) {
         c.drawColor(Kit.GROUND)
         drawSpine(c)
-        if (leafA >= 0) drawTurn(c) else drawSpread(c, spread, 0f)
+        when {
+            leafA >= 0 -> drawTurn(c)
+            closed -> c.drawBitmap(jacket(), 0f, 0f, null)
+            else -> drawSpread(c, spread, 0f)
+        }
         drawProgress(c)
     }
 
@@ -376,6 +398,7 @@ class ReaderView(c: Context) : View(c) {
 
     /** A tap or a key: the leaf turns over by itself, lifted from its lower corner. */
     fun turn(dir: Int): Boolean {
+        if (closed) { if (dir > 0) openJacket(); return dir > 0 }
         settleNow()
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
@@ -463,8 +486,10 @@ class ReaderView(c: Context) : View(c) {
 
     private fun drawTurn(c: Canvas) {
         val a = leafA
-        // Beneath: this spread's left page, and the next one's right page (on one page, the page beneath)
-        if (mode == Mode.SINGLE) pageAt(a + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
+        // Beneath: this spread's left page, and the next one's right page (on one page, the page
+        // beneath; under the jacket, the page you were on)
+        if (fromJacket) drawSpread(c, spread, 0f)
+        else if (mode == Mode.SINGLE) pageAt(a + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
         else {
             pageAt(a, 0)?.let { drawPage(c, it, textRects[0], 0) }
             pageAt(a + 1, 1)?.let { drawPage(c, it, textRects[1], 1) }
@@ -475,7 +500,7 @@ class ReaderView(c: Context) : View(c) {
     }
 
     /** Carries the hand to (u, v) in the leaf's frame, the corner rising by [arc] on the way. */
-    private fun sweep(u: Float, v: Float, arc: Float, ms: Long, landed: Boolean) {
+    private fun sweep(u: Float, v: Float, arc: Float, ms: Long, landed: Boolean, done: (() -> Unit)? = null) {
         leafAnim?.run { removeAllListeners(); cancel() }
         val u0 = leaf.handU; val v0 = leaf.handV
         leafAnim = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -488,7 +513,9 @@ class ReaderView(c: Context) : View(c) {
             }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(an: Animator) {
-                    leafA = -1; invalidate()
+                    leafA = -1
+                    done?.invoke()
+                    invalidate()
                     if (landed) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 }
             })
@@ -499,7 +526,43 @@ class ReaderView(c: Context) : View(c) {
     /** Ends any turn at once, the leaf where it was going. */
     private fun settleNow() {
         leafAnim?.run { removeAllListeners(); cancel() }
-        leafAnim = null; leafA = -1
+        leafAnim = null; leafA = -1; fromJacket = false
+    }
+
+    // ---- Opening the jacket
+
+    private fun jacket(): Bitmap = jacketBmp?.takeIf { it.width == width && it.height == height }
+        ?: Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888).also { b ->
+            article?.let { Jacket.draw(Canvas(b), width, height, it, context) }
+            jacketBmp = b
+        }
+
+    /** The jacket as the leaf: printed on the front, the endpaper inside. */
+    private fun beginJacket() {
+        fromJacket = true; sigma = 1; leafA = spread
+        leaf.size(width.toFloat(), height.toFloat())
+        val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
+        val inside = versoBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        versoBmp = inside
+        Canvas(inside).apply {
+            // Endpaper: Visconti green, a fine champagne lattice
+            drawColor(Kit.Fixed.VISCONTI_GREEN)
+            val l = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = withAlpha(Kit.Fixed.CHAMPAGNE and 0xFFFFFF, .12f); strokeWidth = dp * .8f }
+            val step = 18f * dp
+            var k = -h.toFloat()
+            while (k < w + h) { drawLine(k, 0f, k + h, h.toFloat(), l); drawLine(k + h, 0f, k, h.toFloat(), l); k += step }
+        }
+        leaf.front = jacket(); leaf.back = inside
+        leaf.shaders()
+    }
+
+    /** A tap on the jacket opens the book. */
+    private fun openJacket() {
+        settleNow()
+        beginJacket()
+        leaf.take(leaf.len, leaf.breadth * .8f)
+        paper?.cover()
+        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .07f, ms = 820L, landed = true) { closed = false; fromJacket = false; record() }
     }
 
     // ---- The hand on the leaf
@@ -513,6 +576,15 @@ class ReaderView(c: Context) : View(c) {
     private fun acrossOf(e: MotionEvent) = if (across) e.y else e.x
 
     private fun startDrag(e: MotionEvent, dir: Int): Boolean {
+        if (closed) {
+            if (dir < 0) return false
+            settleNow(); beginJacket()
+            leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
+            dragging = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            follow(e)
+            return true
+        }
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
         settleNow()
@@ -545,6 +617,15 @@ class ReaderView(c: Context) : View(c) {
         // On one page the spine is the screen's edge, out of reach: past the middle is far enough
         val halfway = when { mode != Mode.SINGLE -> .5f; sigma > 0 -> .3f; else -> .72f }
         val over = when { v < -fast -> true; v > fast -> false; else -> leaf.progress > halfway }
+        if (fromJacket) {
+            if (over) paper?.cover()
+            val rest = if (over) 1f - leaf.progress else leaf.progress
+            sweep(if (over) -leaf.grabU else leaf.grabU, leaf.grabV, 0f, (220 + 420 * rest).toLong(), landed = over) {
+                if (over) closed = false
+                fromJacket = false; record()
+            }
+            return
+        }
         val a = leafA
         val now = if (over == (sigma > 0)) a + 1 else a
         val changed = now != spread
@@ -568,6 +649,7 @@ class ReaderView(c: Context) : View(c) {
             val w = width.toFloat(); val h = height.toFloat()
             when {
                 e.y < h * .1f -> onTopEdge?.invoke()
+                closed -> openJacket()
                 mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
                 mode == Mode.STACK && abs(e.y - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
                 e.x < w * .3f -> turn(-1)
@@ -628,6 +710,7 @@ class ReaderView(c: Context) : View(c) {
         fun arr(r: RectF) = JSONArray(listOf(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt()))
         val o = JSONObject()
             .put("mode", mode.name)
+            .put("closed", closed)
             .put("view", JSONArray(listOf(width, height)))
             .put("pages", starts.size)
             .put("spread", JSONArray(listOf(sp[0], sp[1])))

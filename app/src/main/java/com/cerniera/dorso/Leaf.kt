@@ -143,8 +143,8 @@ internal class Leaf {
             val g = (l * 255).toInt().coerceIn(0, 255)
             light[k] = Color.rgb(g, g, g)
             // The sheen: where the roll turns its face to the light (a little past upright)
-            val s = if (a <= 0f || a >= PI.toFloat()) 0f else cos(a - 1.15f).coerceAtLeast(0f).let { it * it * it * it * it * it }
-            val sa = (255 * gloss * s * sin(PI * progress).toFloat()).toInt().coerceIn(0, 255)
+            val shine = if (a <= 0f || a >= PI.toFloat()) 0f else cos(a - 1.15f).coerceAtLeast(0f).let { it * it * it * it * it * it }
+            val sa = (255 * gloss * shine * sin(PI * progress).toFloat()).toInt().coerceIn(0, 255)
             sheen[k] = Color.argb(sa, 255, 250, 238)
         }
         frontCount = 0; backCount = 0

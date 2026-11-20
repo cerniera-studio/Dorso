@@ -30,7 +30,6 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import androidx.core.graphics.ColorUtils
-import com.cerniera.kit.Hinge
 import com.cerniera.kit.Kit
 import com.cerniera.kit.withAlpha
 import java.io.File
@@ -126,7 +125,7 @@ class ReaderView(c: Context) : View(c) {
     // ---- The jacket: on the cover screen the book is shut, until you open it
     /** True while the jacket is showing. Shut when the book opens on the cover screen or the phone folds shut. */
     var closed = false; private set
-    private var wasOpen: Boolean? = null
+    private var lastSw = -1
     private var fromJacket = false
     private var jacketBmp: Bitmap? = null
     private var lastTurnAt = 0L
@@ -303,14 +302,12 @@ class ReaderView(c: Context) : View(c) {
         offset = lay.getLineStart(starts[anchorPage])
         settleNow()
         // The book shuts when it opens on the cover screen, or when the phone folds shut under it;
-        // unfolded (or the cover turned sideways) it lies open. Folded or open is read from the
-        // whole screen, never from Dorso's window: a narrow window in split screen or a pop-up
-        // window on the main screen is not the phone folding (adaptive quality, 20 Nov 2026)
-        val open = Hinge.unfolded(context)
-        if (wasOpen == null) closed = mode == Mode.SINGLE && !open
-        else if (wasOpen == true && !open) closed = true
+        // unfolded (or the cover turned sideways) it lies open
+        val sw = resources.configuration.smallestScreenWidthDp
+        if (lastSw < 0) closed = mode == Mode.SINGLE && sw < 600
+        else if (lastSw >= 600 && sw < 600) closed = true
         if (mode != Mode.SINGLE) closed = false
-        wasOpen = open
+        lastSw = sw
         jacketBmp = null
         record(colW, sizePx)
         invalidate()

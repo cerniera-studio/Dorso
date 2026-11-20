@@ -31,6 +31,11 @@ object Fetch {
      * same page through [Browser], which passes the check the way Chrome does. Call off the main thread.
      */
     fun article(context: Context, url: String): Result {
+        // Signed in to this site: read it as you, through the browser that holds your session
+        if (Accounts.signedInFor(context, url)) {
+            val viaBrowser = runCatching { Browser.page(context, url) }.map { parse(it.url, it.html) }
+            viaBrowser.getOrNull()?.takeIf { it.article != null }?.let { return it }
+        }
         val page = runCatching { download(url) }.recoverCatching { e ->
             if (e is Refused && e.code in REFUSALS) Browser.page(context, url).let { it.url to it.html } else throw e
         }

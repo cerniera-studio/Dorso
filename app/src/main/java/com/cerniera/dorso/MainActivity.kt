@@ -87,6 +87,15 @@ class MainActivity : Activity() {
             save(i.getStringExtra(Intent.EXTRA_TEXT) ?: "")
             return
         }
+        // For the emulator walk: draw the nightstand at a size (w,h in dp) into files/, to photograph
+        i.getStringExtra("nightstand")?.let { spec ->
+            val (w, h) = spec.split(',').map { (it.toFloat() * resources.displayMetrics.density).toInt() }
+            Kit.follow(this)
+            val b = Nightstand.render(this, Nightstand.current(this), w, h)
+            java.io.File(filesDir, "nightstand.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            Nightstand.refresh(this)
+            i.removeExtra("nightstand")
+        }
         // For the emulator walk: a sign-in page, by site
         i.getStringExtra("signin")?.let { SignInActivity.open(this, site = it); i.removeExtra("signin"); return }
         // For the emulator walk: open the sample straight into the reader
@@ -141,6 +150,7 @@ class MainActivity : Activity() {
                 val kept = if (had != null) a.copy(id = had.id, savedAt = had.savedAt) else a
                 if (had != null && r.teaser && had.words >= a.words) { say(teaserNote(url, had.words)); return@post }
                 Store.put(this, kept)
+                Nightstand.refresh(this)
                 say(if (r.teaser) teaserNote(url, a.words) else "Saved: ${a.title}.")
                 fill()
                 if (!r.teaser) ReaderActivity.open(this, kept.id)

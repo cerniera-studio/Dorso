@@ -76,7 +76,7 @@ for k in 1 2 3 4 5 6; do
     sleep 0.4; adb exec-out screencap -p > shot-cover-turning.png
     adb shell input motionevent MOVE 40 950; adb shell input motionevent UP 40 950
   else
-    adb shell input swipe 680 1100 60 1000 160
+    adb shell input swipe 560 1100 40 1000 180
   fi
   sleep 1.6
   s1=$(field cover)

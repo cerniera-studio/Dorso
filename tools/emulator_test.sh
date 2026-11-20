@@ -125,7 +125,7 @@ sleep 0.3; adb exec-out screencap -p > shot-dogear-folding.png
 adb shell input motionevent UP 1339 182
 sleep 1; adb exec-out screencap -p > shot-dogear.png
 if [ "$(field marks)" = "1" ]; then echo "::notice::dog-ear: page marked"; else echo "::error::dog-ear did not mark the page (marks=$(field marks))"; fail=1; fi
-adb shell input tap 1488 24; sleep 1
+adb shell input tap 1470 75; sleep 1      # below the status bar the top-edge drag brought in
 if [ "$(field marks)" = "0" ]; then echo "::notice::dog-ear: a tap smoothed it out"; else echo "::error::tap on the fold did not unmark (marks=$(field marks))"; fail=1; fi
 if crashed; then echo "::error::crash with the dog-ear"; fail=1; fi
 adb shell input tap 700 60; sleep 1

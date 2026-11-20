@@ -142,8 +142,10 @@ class Nightstand : AppWidgetProvider() {
                 typeface = Kit.sans(c, 500); color = Kit.Fixed.IVORY; textSize = 11.5f * d; letterSpacing = .06f
                 textAlign = Paint.Align.CENTER; setShadowLayer(3f * d, 0f, 1f * d, withAlpha(0x000000, .6f))
             }
+            // Where it's from goes first if there's no room; the time left stays
             var s = words
-            while (t.measureText(s) > w - 8f * d && s.length > 4) s = s.dropLast(2).trimEnd() + "…".takeIf { !s.endsWith("…") }.orEmpty()
+            if (t.measureText(s) > w - 8f * d && a != null) s = left(a)
+            while (t.measureText(s) > w - 8f * d && s.length > 4) s = s.dropLast(2).trimEnd() + "…"
             cv.drawText(s, w / 2f, min(h - 6f * d, book.bottom + line - 4f * d), t)
             return out
         }

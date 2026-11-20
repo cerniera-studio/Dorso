@@ -119,8 +119,9 @@ object Jacket {
                 typeface = Kit.sans(ctx, 500); color = withAlpha(Kit.CHAMPAGNE and 0xFFFFFF, .95f)
                 textSize = 10f * dp; letterSpacing = .16f; textAlign = Paint.Align.RIGHT
             }
-            note.textAlign = Paint.Align.CENTER
-            c.drawText("${(p * 100).toInt()}%", rx, len + 13f * dp, note)
+            // Beside the ribbon's tail, never past the edge
+            note.textAlign = Paint.Align.RIGHT
+            c.drawText("${(p * 100).toInt()}%", rx - rw / 2 - 4f * dp, len - 1f * dp, note)
         }
 
     }

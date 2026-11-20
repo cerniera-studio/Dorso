@@ -87,6 +87,8 @@ class MainActivity : Activity() {
             save(i.getStringExtra(Intent.EXTRA_TEXT) ?: "")
             return
         }
+        // For the emulator walk: a sign-in page, by site
+        i.getStringExtra("signin")?.let { SignInActivity.open(this, site = it); i.removeExtra("signin"); return }
         // For the emulator walk: open the sample straight into the reader
         if (i.getStringExtra("open") == "sample") Store.all(this).firstOrNull { it.url == SAMPLE_URL }?.let { a ->
             i.getStringExtra("at")?.toIntOrNull()?.let { a.offset = it; Store.put(this, a) }

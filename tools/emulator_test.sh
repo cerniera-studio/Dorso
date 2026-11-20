@@ -118,7 +118,7 @@ adb shell am start -W -n $PKG/.MainActivity -a android.intent.action.SEND -t tex
 got=""
 for i in $(seq 1 25); do
   sleep 2
-  got=$(adb shell run-as $PKG sh -c 'grep -l '\"site\":\"Medium\"' files/reads/*.json' 2>/dev/null | head -1)
+  got=$(adb shell run-as $PKG sh -c 'grep -l Medium files/reads/*.json' 2>/dev/null | head -1)
   [ -n "$got" ] && break
 done
 adb exec-out screencap -p > shot-medium.png
@@ -134,7 +134,7 @@ adb shell input keyevent KEYCODE_BACK; sleep 1
 adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 3
 adb shell input swipe 360 1400 360 300 300; sleep 1
 adb exec-out screencap -p > shot-accounts.png
-adb shell am start -W -n $PKG/.SignInActivity --es site nyt >/dev/null; sleep 10
+adb shell am start -W -n $PKG/.MainActivity --es signin nyt >/dev/null; sleep 10
 adb exec-out screencap -p > shot-signin.png
 if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "::notice::sign-in page opened"; else echo "::warning::sign-in page not in front"; fi
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1

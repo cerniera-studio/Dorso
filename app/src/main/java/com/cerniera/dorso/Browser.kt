@@ -25,7 +25,6 @@ import org.json.JSONArray
 object Browser {
     private const val WAIT_MS = 30_000L
     private const val POLL_MS = 700L
-    private const val SETTLE_MS = 1400L
 
     // Ready when the page has real text and isn't a "Just a moment…" check
     private const val READY_JS = """(function(){
@@ -65,18 +64,10 @@ object Browser {
                 w.evaluateJavascript(READY_JS) { raw ->
                     val s = runCatching { JSONArray("[$raw]").optString(0, "") }.getOrDefault("")
                     if (s.isNotEmpty()) {
-                        val first = Result(s.substringBefore('\n'), s.substringAfter('\n'))
-                        // Give the page a moment more: a subscriber's text and late scripts can still be arriving
-                        main.postDelayed({
-                            if (done.count == 0L) return@postDelayed
-                            w.evaluateJavascript(READY_JS) { again ->
-                                val t = runCatching { JSONArray("[$again]").optString(0, "") }.getOrDefault("")
-                                // The fuller reading, but only of the same page: a site may move on to another story
-                                val same = t.substringBefore('\n') == first.url
-                                out = if (same && t.length > s.length) Result(t.substringBefore('\n'), t.substringAfter('\n')) else first
-                                done.countDown()
-                            }
-                        }, SETTLE_MS)
+                        // Read as soon as the page is ready: waiting longer let Medium's page move on
+                        // to another story before it was read (seen twice in the emulator walk)
+                        out = Result(s.substringBefore('\n'), s.substringAfter('\n'))
+                        done.countDown()
                     } else main.postDelayed({ poll() }, POLL_MS)
                 }
             }

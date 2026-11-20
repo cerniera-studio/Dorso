@@ -47,11 +47,15 @@ for line in sys.stdin:
 layout() {  # read a few times: run-as can come back empty while the window settles
   for try in 1 2 3 4 5; do
     l=$(timeout 15 adb shell run-as $PKG cat files/layout.json 2>/dev/null)
-    [ -n "$l" ] && { echo "$l"; return; }; sleep 2
+    # Only a layout counts: a missing file comes back as an error message, not as nothing
+    case "$l" in "{"*) echo "$l"; return;; esac; sleep 2
   done
 }
 fresh() {  # wait for a new layout after a change (the file is cleared first)
-  for try in $(seq 1 15); do l=$(layout); [ -n "$l" ] && { echo "$l"; return; }; sleep 1; done
+  for try in $(seq 1 15); do
+    l=$(timeout 15 adb shell run-as $PKG cat files/layout.json 2>/dev/null)
+    case "$l" in "{"*) echo "$l"; return;; esac; sleep 1
+  done
 }
 clear_layout() { timeout 15 adb shell run-as $PKG rm -f files/layout.json; }
 
@@ -102,11 +106,12 @@ else
     clear_layout; timeout 20 adb shell am task resize "$id" 0 0 740 1568; sleep 2
     narrow=$(fresh); shot narrow
     check "Pop-up window shrunk to 740 px" SINGLE "$wide" "$narrow"
-    # 3. Turned
-    clear_layout; adb shell settings put system user_rotation 1; sleep 3
-    turned=$(fresh); shot turned
+    # 3. Turned (a pop-up window may keep its size through a turn, so the file isn't cleared:
+    # what counts is what is on screen afterwards)
+    adb shell settings put system user_rotation 1; sleep 4
+    turned=$(layout); shot turned
     check "Narrow pop-up window, phone turned" SINGLE "$narrow" "$turned"
-    adb shell settings put system user_rotation 0; sleep 3
+    adb shell settings put system user_rotation 0; sleep 4
     # 4. Widened again
     back=$(layout)
     clear_layout; timeout 20 adb shell am task resize "$id" 0 0 1400 1568; sleep 2

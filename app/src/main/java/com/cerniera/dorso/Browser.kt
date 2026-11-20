@@ -71,7 +71,9 @@ object Browser {
                             if (done.count == 0L) return@postDelayed
                             w.evaluateJavascript(READY_JS) { again ->
                                 val t = runCatching { JSONArray("[$again]").optString(0, "") }.getOrDefault("")
-                                out = if (t.length > s.length) Result(t.substringBefore('\n'), t.substringAfter('\n')) else first
+                                // The fuller reading, but only of the same page: a site may move on to another story
+                                val same = t.substringBefore('\n') == first.url
+                                out = if (same && t.length > s.length) Result(t.substringBefore('\n'), t.substringAfter('\n')) else first
                                 done.countDown()
                             }
                         }, SETTLE_MS)

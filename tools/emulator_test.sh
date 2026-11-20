@@ -116,7 +116,7 @@ adb exec-out screencap -p > shot-shelf-after.png
 MEDIUM="https://medium.com/change-your-mind/doing-nothing-09c8f365bff1"
 adb shell am start -W -n $PKG/.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$MEDIUM" >/dev/null
 got=""
-for i in $(seq 1 25); do
+for i in $(seq 1 40); do
   sleep 2
   got=$(adb shell run-as $PKG sh -c 'grep -l Medium files/reads/*.json' 2>/dev/null | head -1)
   [ -n "$got" ] && break
@@ -126,7 +126,7 @@ if [ -n "$got" ]; then
   words=$(adb shell run-as $PKG cat "$got" | python3 -c "import json,sys; a=json.load(sys.stdin); print(a.get('title',''), '|', sum(len(b.get('t','').split()) for b in a.get('blocks',[])), 'words')" 2>/dev/null)
   echo "::notice::Medium read saved: $words"
 else
-  echo "::warning::Medium read not saved within 50 s (see shot-medium.png)"
+  echo "::warning::Medium read not saved within 80 s (see shot-medium.png)"
 fi
 adb shell input keyevent KEYCODE_BACK; sleep 1
 

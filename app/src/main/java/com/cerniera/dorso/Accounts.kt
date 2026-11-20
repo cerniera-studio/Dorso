@@ -11,16 +11,20 @@ import android.webkit.CookieManager
  * account is stored by Dorso itself beyond which sites you chose to sign into.
  */
 object Accounts {
-    class Site(val key: String, val name: String, val note: String, val login: String, val home: String, val hosts: List<String>, val session: List<String>)
+    class Site(val key: String, val name: String, val note: String, val login: String, val home: String, val hosts: List<String>,
+               /** True when the cookies show a signed-in visitor, not just any visitor. */
+               val session: (Map<String, String>) -> Boolean)
 
     /** The New York Times account also opens The Athletic, which lives at nytimes.com/athletic. */
     val sites = listOf(
         Site("nyt", "The New York Times · The Athletic", "One account for both",
             "https://myaccount.nytimes.com/auth/login", "https://www.nytimes.com/", listOf("nytimes.com", "theathletic.com"),
-            listOf("NYT-S")),
+            // NYT-S is the subscriber's session; anonymous visitors carry nyt-a instead
+            { it["NYT-S"].orEmpty().isNotBlank() }),
         Site("medium", "Medium", "Member-only stories",
             "https://medium.com/m/signin", "https://medium.com/", listOf("medium.com"),
-            listOf("sid")),
+            // Every visitor gets sid and uid; a signed-out uid starts "lo_"
+            { c -> c["uid"].let { it != null && it.isNotBlank() && !it.startsWith("lo_") } }),
     )
 
     fun byKey(k: String) = sites.firstOrNull { it.key == k }
@@ -40,15 +44,18 @@ object Accounts {
         prefs(c).edit().putStringSet("others", others(c) + h).apply()
     }
 
-    private fun cookieNames(url: String): List<String> =
+    private fun cookies(url: String): Map<String, String> =
         runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull().orEmpty()
-            .split(';').map { it.substringBefore('=').trim() }.filter { it.isNotEmpty() }
+            .split(';').map { it.trim() }.filter { it.contains('=') }
+            .associate { it.substringBefore('=').trim() to it.substringAfter('=').trim() }
+
+    private fun cookieNames(url: String) = cookies(url).keys.toList()
 
     /**
      * Whether a session cookie for [s] is present. The cookie names are each site's own and could
      * change; if one does, the status here goes wrong but reading still uses whatever is signed in.
      */
-    fun signedIn(s: Site): Boolean = cookieNames(s.home).let { names -> s.session.any { it in names } }
+    fun signedIn(s: Site): Boolean = s.session(cookies(s.home))
 
     /** Whether to read [url] through the signed-in browser: a known site you're signed into, or one you added. */
     fun signedInFor(c: Context, url: String): Boolean {

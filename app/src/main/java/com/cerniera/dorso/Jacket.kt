@@ -12,7 +12,6 @@ import com.cerniera.kit.blend
 import com.cerniera.kit.withAlpha
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
@@ -62,6 +61,7 @@ object Jacket {
             textSize = fit(a.title.uppercase(), this, col, w * .072f, w * .045f, 5)
         }
         y = block(c, a.title.uppercase(), title, margin, y, col, 5, 1.32f)
+        val markY = y + h * .04f
 
         // The treeline, in stipple, rising from one corner
         trees(c, w, h, max(y + h * .06f, h * .6f), rnd, ink, dp)
@@ -69,7 +69,7 @@ object Jacket {
         // The ribbon: from the head, its length how far you've read
         val p = a.progress.coerceIn(0f, 1f)
         if (p > .005f) {
-            val rx = w - margin * .9f; val rw = 7f * dp
+            val rx = w - margin * .38f; val rw = 6f * dp
             val len = h * (.06f + .2f * p)
             val rib = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Kit.CHAMPAGNE }
             val path = Path().apply {
@@ -81,7 +81,8 @@ object Jacket {
                 typeface = Kit.sans(ctx, 500); color = withAlpha(Kit.CHAMPAGNE and 0xFFFFFF, .95f)
                 textSize = 10f * dp; letterSpacing = .16f; textAlign = Paint.Align.RIGHT
             }
-            c.drawText("${(p * 100).toInt()}%", rx - rw, len - 2 * dp, note)
+            note.textAlign = Paint.Align.CENTER
+            c.drawText("${(p * 100).toInt()}%", rx, len + 13f * dp, note)
         }
 
         // The site at the foot, small, like a publisher's mark
@@ -89,7 +90,7 @@ object Jacket {
             typeface = Kit.sans(ctx, 500); color = withAlpha(ink and 0xFFFFFF, .7f)
             textSize = 9.5f * dp; letterSpacing = .3f; textAlign = Paint.Align.LEFT
         }
-        if (a.byline.isNotBlank() && a.site.isNotBlank()) c.drawText(a.site.uppercase(), margin, h - margin * .8f, mark)
+        if (a.byline.isNotBlank() && a.site.isNotBlank()) { mark.textAlign = Paint.Align.CENTER; c.drawText(a.site.uppercase(), w / 2f, markY, mark) }
     }
 
     private fun clean(s: String) = s.replace(Regex("""^BY\s+"""), "").take(48)
@@ -132,37 +133,50 @@ object Jacket {
             val k = t.pow(1.7f)
             return base - span * (.18f + .42f * k) + span * .05f * sin(x / w * 7f + rnd0) * (1 - k)
         }
-        // Trees: crowns as soft ellipses along the high side
-        data class Tree(val x: Float, val top: Float, val r: Float, val trunk: Float)
+        // Trees: each crown a cluster of lobes, standing on a trunk, along the high side
+        class Tree(val x: Float, val ground: Float, val top: Float, val lobes: List<FloatArray>)
         val trees = ArrayList<Tree>()
-        val count = 9 + rnd.nextInt(6)
+        val count = 7 + rnd.nextInt(5)
         repeat(count) {
-            val t = rnd.nextFloat().pow(.55f)
-            val x = if (fromRight) w * (1 - t * .85f) else w * t * .85f
+            val t = rnd.nextFloat().pow(.6f)
+            val x = if (fromRight) w * (1 - t * .9f) else w * t * .9f
             val g = ridge(x)
-            val height = span * (.25f + .55f * (1 - t) * rnd.nextFloat() + .2f * (1 - t))
-            trees += Tree(x, g - height, w * (.05f + .07f * rnd.nextFloat()) * (1.2f - t * .5f), g)
+            val height = span * (.3f + .5f * (1 - t) * (.6f + .4f * rnd.nextFloat()))
+            val r = w * (.045f + .05f * rnd.nextFloat()) * (1.25f - t * .5f)
+            val crownTop = g - height
+            val lobes = ArrayList<FloatArray>()
+            val nl = 4 + rnd.nextInt(4)
+            repeat(nl) { k ->
+                val f = k.toFloat() / (nl - 1)
+                val ly = crownTop + r * .9f + f * (height * .62f - r)
+                val spread = r * (.35f + .65f * sin(PI.toFloat() * (.25f + .6f * f)))
+                lobes += floatArrayOf(x + (rnd.nextFloat() - .5f) * 2 * spread * .6f, ly, r * (.55f + .45f * rnd.nextFloat()) * (.7f + .5f * sin(PI.toFloat() * (.2f + .7f * f))))
+            }
+            trees += Tree(x, g, crownTop, lobes)
         }
         val dot = Paint(Paint.ANTI_ALIAS_FLAG)
-        val n = (w * span / (6.5f * dp * dp)).toInt().coerceAtMost(60000)
+        val n = (w * span * 1.1f / (3.2f * dp * dp)).toInt().coerceAtMost(110000)
         repeat(n) {
             val x = rnd.nextFloat() * w
             val y = top - span * .1f + rnd.nextFloat() * span * 1.1f
             var d = 0f
             val g = ridge(x)
-            if (y > g) d = .35f + .65f * ((y - g) / max(1f, base - g)).coerceIn(0f, 1f)
+            if (y > g) d = .3f + .6f * ((y - g) / max(1f, base - g)).coerceIn(0f, 1f).pow(.7f)
             for (t in trees) {
-                // A crown: an upright ellipse; a trunk below it
-                val ry = (t.trunk - t.top) * .62f
-                val cy = t.top + ry
-                val ex = (x - t.x) / t.r; val ey = (y - cy) / ry
-                val e = ex * ex + ey * ey
-                if (e < 1.25f) d = max(d, (1.15f - e) .coerceIn(0f, 1f) * (.55f + .45f * exp(-e * 1.5f)) + .1f * (rnd.nextFloat() - .5f))
-                if (abs(x - t.x) < t.r * .07f && y in cy..t.trunk) d = max(d, .75f)
+                if (abs(x - t.x) < t.lobes[0][2] * .09f && y in t.top..t.ground) d = max(d, .85f)
+                for (l in t.lobes) {
+                    val dx = (x - l[0]) / l[2]; val dy = (y - l[1]) / (l[2] * 1.1f)
+                    val e = dx * dx + dy * dy
+                    if (e < 1f) {
+                        // Dense at the heart, lighter towards the edge, the edge itself crisp; the lit side paler
+                        val lit = ((x - l[0]) / l[2] * (if (fromRight) -1f else 1f) + (l[1] - y) / l[2]) * .18f
+                        d = max(d, (.92f - .45f * e - lit).coerceIn(.18f, .95f))
+                    }
+                }
             }
-            if (d > 0f && rnd.nextFloat() < d * d * 1.15f) {
-                dot.color = withAlpha(ink and 0xFFFFFF, .55f + .4f * rnd.nextFloat())
-                c.drawCircle(x, y, (.5f + .55f * rnd.nextFloat()) * dp, dot)
+            if (d > 0f && rnd.nextFloat() < d * d) {
+                dot.color = withAlpha(ink and 0xFFFFFF, .62f + .35f * rnd.nextFloat())
+                c.drawCircle(x, y, (.42f + .4f * rnd.nextFloat()) * dp, dot)
             }
         }
     }

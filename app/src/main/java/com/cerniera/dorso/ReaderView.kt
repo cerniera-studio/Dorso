@@ -915,6 +915,7 @@ class ReaderView(c: Context) : View(c) {
 
     private fun startDrag(e: MotionEvent, dir: Int): Boolean {
         if (closed) {
+            android.util.Log.i("Dorso", "cover drag start dir=$dir style=${style()} leafA=$leafA running=${spring.running}")
             if (width > height) { changeCover(dir); return false }
             settleNow(); beginJacket(Math.floorMod(style() + dir, Jacket.names.size))
             leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
@@ -1020,9 +1021,11 @@ class ReaderView(c: Context) : View(c) {
         val reached = ((leaf.grabU - spring.tu) / (2 * leaf.grabU)).coerceIn(0f, 1f)
         val over = when { v < -fast -> true; v > fast -> false; else -> max(reached, leaf.progress) > halfway }
         if (fromJacket) {
+            android.util.Log.i("Dorso", "cover release v=$v reached=$reached progress=${leaf.progress} over=$over to=$jacketTo")
             if (over) paper?.cover()
             val to = jacketTo
             fall(over, v, landed = over) {
+                android.util.Log.i("Dorso", "cover landed over=$over to=$to")
                 if (over) setCover(to)
                 fromJacket = false
             }
@@ -1083,6 +1086,7 @@ class ReaderView(c: Context) : View(c) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (closed && e.actionMasked != MotionEvent.ACTION_MOVE) android.util.Log.i("Dorso", "touch ${MotionEvent.actionToString(e.actionMasked)} x=${e.x} dragging=$dragging leafA=$leafA")
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; dragging = false; folding = false

@@ -115,13 +115,6 @@ object Jacket {
                 lineTo(rx, len - rw * .8f); lineTo(rx - rw / 2, len); close()
             }
             c.drawPath(path, rib)
-            val note = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Kit.sans(ctx, 500); color = withAlpha(Kit.CHAMPAGNE and 0xFFFFFF, .95f)
-                textSize = 10f * dp; letterSpacing = .16f; textAlign = Paint.Align.RIGHT
-            }
-            // Beside the ribbon's tail, never past the edge
-            note.textAlign = Paint.Align.RIGHT
-            c.drawText("${(p * 100).toInt()}%", rx - rw / 2 - 4f * dp, len - 1f * dp, note)
         }
 
     }

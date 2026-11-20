@@ -2,7 +2,11 @@ package com.cerniera.dorso
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Rect
@@ -20,12 +24,20 @@ import android.text.style.LeadingMarginSpan
 import android.text.style.TypefaceSpan
 import android.util.TypedValue
 import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import android.view.ViewConfiguration
+import androidx.core.graphics.ColorUtils
 import com.cerniera.kit.Kit
 import com.cerniera.kit.withAlpha
 import java.io.File
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONArray
@@ -47,8 +59,10 @@ import org.json.JSONObject
  * or type size, the pages are cut afresh so that line starts the left page ([Pager]).
  *
  * The doctrine:
- * - Membrane: the spread is one sheet; a turn carries both pages together and the facing margin
- *   yields as it passes.
+ * - Membrane: a page is one sheet hinged at the spine (on the main screen, the crease itself). Drag
+ *   its edge and it lifts, bends and turns over, the fore-edge leading and the spine side following,
+ *   the next page showing beneath and this page's print faintly through its back. Let go past
+ *   halfway, or flick, and it falls over; otherwise it settles back. A tap turns it the same way.
  * - Concentrato: turn quickly and the running heads and folios fall away, leaving only text; they
  *   return when you stop.
  * - Giulietta: no toolbar. Touch the top edge for type and the shelf; touch the spine for the shelf.
@@ -94,11 +108,13 @@ class ReaderView(c: Context) : View(c) {
     private val shade = Paint()
     private val line = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // ---- Turning
-    private var animFrom = -1
-    private var animT = 1f
-    private var animDir = 1
-    private var anim: ValueAnimator? = null
+    // ---- Turning: the leaf between spread [leafA] and the one after it, [leafP] of the way over
+    private val leaf = Leaf()
+    private var leafA = -1
+    private var leafP = 0f
+    private var leafAnim: ValueAnimator? = null
+    private val leafShadow = Paint()
+    private val pt = FloatArray(2)
     private var lastTurnAt = 0L
     private var chromeAlpha = 1f
     private var chromeAnim: ValueAnimator? = null
@@ -271,7 +287,7 @@ class ReaderView(c: Context) : View(c) {
         spreads = Pager.spreads(starts.size, anchorPage, if (mode == Mode.SINGLE) 1 else 2)
         spread = Pager.spreadOf(spreads, anchorPage)
         offset = lay.getLineStart(starts[anchorPage])
-        anim?.cancel(); animT = 1f; animFrom = -1
+        settleNow()
         record(colW, sizePx)
         invalidate()
     }
@@ -281,13 +297,7 @@ class ReaderView(c: Context) : View(c) {
     override fun onDraw(c: Canvas) {
         c.drawColor(Kit.GROUND)
         drawSpine(c)
-        val t = animT
-        if (animFrom >= 0 && t < 1f) {
-            val span = if (mode == Mode.STACK) width.toFloat() else width.toFloat()
-            // The leaving spread is carried off; the arriving one follows a little behind it (the margin yields)
-            drawSpread(c, animFrom, -animDir * span * Kit.ease.getInterpolation(t))
-            drawSpread(c, spread, animDir * span * (1f - t))
-        } else drawSpread(c, spread, 0f)
+        if (leafA >= 0) drawTurn(c) else drawSpread(c, spread, 0f)
         drawProgress(c)
     }
 
@@ -361,30 +371,178 @@ class ReaderView(c: Context) : View(c) {
 
     // ---- Turning and touch
 
+    /** A tap or a key: the leaf turns over by itself. */
     fun turn(dir: Int): Boolean {
+        settleNow()
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
+        val quick = concentrato()
+        beginLeaf(min(spread, target))
+        leafP = if (dir > 0) 0f else pEnd
+        spread = target
+        moved()
+        animateLeaf(if (dir > 0) pEnd else 0f, if (quick) 300L else 640L, landed = true)
+        return true
+    }
+
+    /** Concentrato: turning fast, only the text stays. True when this turn follows the last closely. */
+    private fun concentrato(): Boolean {
         val now = System.currentTimeMillis()
         val quick = now - lastTurnAt < 450
         lastTurnAt = now
-        // Concentrato: turning fast, only the text stays
         if (quick) fadeChrome(0f, Kit.QUICK)
         removeCallbacks(restoreChrome)
         postDelayed(restoreChrome, 900)
-        anim?.cancel()
-        animFrom = spread; animDir = dir; spread = target
-        anim = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = if (quick) 170 else Kit.GLIDE + 60
-            interpolator = Kit.ease
-            addUpdateListener { animT = it.animatedValue as Float; invalidate() }
-            start()
-        }
+        return quick
+    }
+
+    /** The place is now the spread on screen: tell the activity, and the walk. */
+    private fun moved() {
         val sp = spreads[spread]
         val left = if (sp[0] >= 0) sp[0] else sp[1]
         layout?.let { offset = it.getLineStart(starts[left]) }
         onMoved?.invoke(offset, (max(sp[0], sp[1]) + 1).toFloat() / starts.size)
         record()
+    }
+
+    // ---- The leaf
+
+    /** How far a turn goes: on one page there is no left page to lie on, so the sheet leaves once past upright. */
+    private val pEnd get() = if (mode == Mode.SINGLE) .66f else 1f
+    private val across get() = mode != Mode.STACK
+
+    /** Places a leaf point (distance from the spine, position along it) on the screen. */
+    private val toScreen: (Float, Float, FloatArray) -> Unit = { u, v, out ->
+        if (across) { out[0] = split + u; out[1] = v } else { out[0] = v; out[1] = split + u }
+    }
+
+    /** Prints both sides of the sheet between spread [a] and the next: its recto is [a]'s right page, its verso the next one's left. */
+    private fun beginLeaf(a: Int) {
+        leafA = a
+        val len = if (across) max(split, width - split) else max(split, height - split)
+        val breadth = if (across) height.toFloat() else width.toFloat()
+        leaf.size(len, breadth)
+        val w = ceil(len).toInt().coerceAtLeast(1); val h = breadth.toInt().coerceAtLeast(1)
+        fun bmp(old: Bitmap?) = old?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val paper = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .045f) else Kit.GROUND
+        // From the screen into the leaf's frame: u from the spine outwards, v along it
+        fun frame(verso: Boolean) = Matrix().apply {
+            val k = if (verso) -1f else 1f
+            setValues(if (across) floatArrayOf(k, 0f, -k * split, 0f, 1f, 0f, 0f, 0f, 1f)
+                      else floatArrayOf(0f, k, -k * split, 1f, 0f, 0f, 0f, 0f, 1f))
+        }
+        val r = bmp(leaf.recto).also { leaf.recto = it }
+        Canvas(r).apply {
+            drawColor(paper); concat(frame(false))
+            pageAt(a, if (mode == Mode.SINGLE) 0 else 1)?.let { drawPage(this, it, textRects[if (mode == Mode.SINGLE) 0 else 1], if (mode == Mode.SINGLE) 0 else 1) }
+        }
+        val vs = bmp(leaf.verso?.takeIf { it !== r }).also { leaf.verso = it }
+        Canvas(vs).apply {
+            drawColor(paper)
+            if (mode != Mode.SINGLE) { save(); concat(frame(true)); pageAt(a + 1, 0)?.let { drawPage(this, it, textRects[0], 0) }; restore() }
+            // The other side's print, faintly through the paper
+            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 14 else 20 })
+        }
+    }
+
+    private fun pageAt(s: Int, side: Int): Int? = spreads.getOrNull(s)?.get(side)?.takeIf { it >= 0 }
+
+    private fun drawTurn(c: Canvas) {
+        val a = leafA
+        // Beneath: this spread's left page, and the next one's right page (on one page, the next page)
+        if (mode == Mode.SINGLE) pageAt(a + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
+        else {
+            pageAt(a, 0)?.let { drawPage(c, it, textRects[0], 0) }
+            pageAt(a + 1, 1)?.let { drawPage(c, it, textRects[1], 1) }
+        }
+        leaf.shape(leafP)
+        val lift = kotlin.math.sin(PI * leafP).toFloat().coerceIn(0f, 1f)
+        // Its shadow on the page beneath, just past its edge
+        val reach = leaf.reach
+        if (lift > .01f) {
+            val dir = if (reach >= 0f) 1f else -1f
+            val w = (8f + 34f * lift) * dp
+            val e0 = split + reach; val e1 = e0 + dir * w
+            val dark = withAlpha(0x000000, (if (Kit.dark) .55f else .22f) * lift)
+            val clear = withAlpha(0x000000, 0f)
+            leafShadow.shader = if (across) LinearGradient(e0, 0f, e1, 0f, dark, clear, Shader.TileMode.CLAMP)
+                                else LinearGradient(0f, e0, 0f, e1, dark, clear, Shader.TileMode.CLAMP)
+            val lo = min(e0, e1); val hi = max(e0, e1)
+            if (across) c.drawRect(lo, 0f, hi, height.toFloat(), leafShadow) else c.drawRect(0f, lo, width.toFloat(), hi, leafShadow)
+        }
+        leaf.draw(c, toScreen, withAlpha(Kit.INK and 0xFFFFFF, if (Kit.dark) .22f else .12f), lift)
+    }
+
+    private fun animateLeaf(to: Float, fullMs: Long, landed: Boolean) {
+        leafAnim?.run { removeAllListeners(); cancel() }
+        val from = leafP
+        val share = (abs(to - from) / pEnd).coerceIn(.2f, 1f)
+        leafAnim = ValueAnimator.ofFloat(from, to).apply {
+            duration = (fullMs * share).toLong()
+            interpolator = Kit.ease
+            addUpdateListener { leafP = it.animatedValue as Float; invalidate() }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(an: Animator) {
+                    leafA = -1; invalidate()
+                    if (landed) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+            })
+            start()
+        }
+    }
+
+    /** Ends any turn at once, the leaf where it was going. */
+    private fun settleNow() {
+        leafAnim?.run { removeAllListeners(); cancel() }
+        leafAnim = null; leafA = -1
+    }
+
+    // ---- The hand on the leaf
+
+    private val slop = ViewConfiguration.get(c).scaledTouchSlop
+    private var downX = 0f; private var downY = 0f
+    private var dragging = false
+    private var grab = 0f
+    private var edgeAtGrab = 0f
+    private var velocity: VelocityTracker? = null
+
+    private fun along(e: MotionEvent) = if (across) e.x else e.y
+    private fun acrossOf(e: MotionEvent) = if (across) e.y else e.x
+
+    private fun startDrag(e: MotionEvent, dir: Int): Boolean {
+        val target = spread + dir
+        if (target < 0 || target >= spreads.size) return false
+        settleNow()
+        beginLeaf(min(spread, target))
+        leafP = if (dir > 0) 0f else pEnd
+        grab = along(e)
+        // On one page, going back, the previous page arrives from off the edge: its fore-edge comes to the finger
+        edgeAtGrab = if (mode == Mode.SINGLE && dir < 0) grab - split else leaf.len * cos(PI * leafP).toFloat()
+        dragging = true
+        follow(e)
+        parent?.requestDisallowInterceptTouchEvent(true)
         return true
+    }
+
+    private fun follow(e: MotionEvent) {
+        val edge = edgeAtGrab + (along(e) - grab)
+        leafP = (acos((edge / leaf.len).coerceIn(-1f, 1f)) / PI).toFloat().coerceIn(0f, pEnd)
+        invalidate()
+    }
+
+    private fun release() {
+        dragging = false
+        val vt = velocity
+        vt?.computeCurrentVelocity(1000)
+        val v = vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f
+        val fast = 420f * dp
+        // Moving towards the spine side carries the leaf over; a flick decides, else halfway does
+        val over = when { v < -fast -> true; v > fast -> false; else -> leafP > pEnd / 2 }
+        val a = leafA
+        val now = if (over) a + 1 else a
+        val changed = now != spread
+        if (changed) { concentrato(); spread = now; moved() }
+        animateLeaf(if (over) pEnd else 0f, 520L, landed = changed)
     }
 
     private fun fadeChrome(to: Float, ms: Long) {
@@ -416,7 +574,31 @@ class ReaderView(c: Context) : View(c) {
         }
     })
 
-    override fun onTouchEvent(e: MotionEvent) = gestures.onTouchEvent(e)
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x; downY = e.y; dragging = false
+                velocity?.recycle(); velocity = VelocityTracker.obtain()
+            }
+        }
+        velocity?.addMovement(e)
+        if (!dragging && e.actionMasked == MotionEvent.ACTION_MOVE) {
+            val d = along(e) - (if (across) downX else downY)
+            val side = acrossOf(e) - (if (across) downY else downX)
+            // Not from the top edge: that's Giulietta's
+            if (abs(d) > slop && abs(d) > abs(side) * 1.2f && downY > height * .1f && startDrag(e, if (d < 0) 1 else -1)) {
+                gestures.onTouchEvent(MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL })
+            }
+        }
+        if (dragging) {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> follow(e)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> release()
+            }
+            return true
+        }
+        return gestures.onTouchEvent(e)
+    }
 
     // ---- For the emulator walk: what is on screen, in files/layout.json
 

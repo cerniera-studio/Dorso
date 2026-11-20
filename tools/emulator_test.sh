@@ -66,6 +66,29 @@ adb shell input tap 650 900; sleep 1.5
 after=$(layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])")
 if [ "$after" -gt "$before" ]; then echo "::notice::turned: $before -> $after"; else echo "::error::page did not turn ($before -> $after)"; fail=1; fi
 adb exec-out screencap -p > shot-turned.png
+
+# The leaf: take the page by its edge, hold it part way over (photographed), then let it go.
+# Past halfway it must fall over (forward: the place moves on; back: it moves back).
+offset() { layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])"; }
+drag() {  # name y x-from x-hold x-to want(+/-)
+  b=$(offset)
+  adb shell input motionevent DOWN $3 $2
+  n=6; for i in $(seq 1 $n); do adb shell input motionevent MOVE $(( $3 + ($4 - $3) * i / n )) $2; done
+  sleep 0.4; adb exec-out screencap -p > "shot-leaf-$1.png"
+  adb shell input motionevent MOVE $5 $2
+  adb shell input motionevent UP $5 $2
+  sleep 1.5
+  a=$(offset)
+  if { [ "$6" = "+" ] && [ "$a" -gt "$b" ]; } || { [ "$6" = "-" ] && [ "$a" -lt "$b" ]; }; then echo "::notice::leaf $1: $b -> $a"
+  else echo "::error::leaf $1 did not turn ($b -> $a, wanted $6)"; fail=1; fi
+  if crashed; then echo "::error::crash turning $1"; fail=1; fi
+}
+drag cover-forward 900 690 380 90 +
+drag cover-back 900 20 300 650 -
+size 1503 1568; sleep 2
+drag main-back 800 60 620 1400 -
+drag main-forward 800 1450 900 120 +
+size 719 1680; sleep 2
 adb shell input tap 360 60; sleep 1
 adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2

@@ -123,10 +123,12 @@ internal class Leaf {
             toScreen(u + (s2 - s) * du, v + (s2 - s) * dv, pt)
             pos[k * 2] = pt[0]; pos[k * 2 + 1] = pt[1]
             // Light: full on the flat, falling off over the roll, a touch lower on the back
+            // Matte paper: the face dims gently as it turns from the light, the back a little greyer
             val l = when {
                 a <= 0f -> 1f
-                a >= PI.toFloat() -> .955f
-                else -> 1f - .5f * sin(a) * (if (a < halfPi) .85f else 1f)
+                a >= PI.toFloat() -> .95f
+                a < halfPi -> .8f + .2f * cos(a)
+                else -> .8f - .15f * cos(a)
             }
             val g = (l * 255).toInt().coerceIn(0, 255)
             light[k] = Color.rgb(g, g, g)

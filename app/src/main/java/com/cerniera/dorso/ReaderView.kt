@@ -450,10 +450,10 @@ class ReaderView(c: Context) : View(c) {
         Canvas(vs).apply {
             drawColor(paperColour)
             if (!single) { save(); concat(frame(-1f)); pageAt(a + 1, 0)?.let { drawPage(this, it, textRects[0], 0) }; restore() }
-            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 14 else 20 })
+            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 8 else 11 })
         }
         // Show-through the other way too, now the verso is printed
-        if (!single) Canvas(r).drawBitmap(vs, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 10 else 14 })
+        if (!single) Canvas(r).drawBitmap(vs, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 6 else 8 })
         leaf.front = if (side > 0) r else vs
         leaf.back = if (side > 0) vs else r
         leaf.shaders()
@@ -470,7 +470,7 @@ class ReaderView(c: Context) : View(c) {
             pageAt(a + 1, 1)?.let { drawPage(c, it, textRects[1], 1) }
         }
         leaf.shape(toScreen)
-        leaf.drawShadow(c, toScreen, if (Kit.dark) .6f else .26f, width, height)
+        leaf.drawShadow(c, toScreen, if (Kit.dark) .5f else .17f, width, height)
         leaf.draw(c)
     }
 

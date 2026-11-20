@@ -73,7 +73,7 @@ offset() { layout | python3 -c "import json,sys; print(json.load(sys.stdin)['off
 drag() {  # name y x-from x-hold x-to want(+/-)
   b=$(offset)
   adb shell input motionevent DOWN $3 $2
-  n=6; for i in $(seq 1 $n); do adb shell input motionevent MOVE $(( $3 + ($4 - $3) * i / n )) $2; done
+  n=6; for i in $(seq 1 $n); do adb shell input motionevent MOVE $(( $3 + ($4 - $3) * i / n )) $(( $2 - 160 * i / n )); done
   sleep 0.4; adb exec-out screencap -p > "shot-leaf-$1.png"
   adb shell input motionevent MOVE $5 $2
   adb shell input motionevent UP $5 $2

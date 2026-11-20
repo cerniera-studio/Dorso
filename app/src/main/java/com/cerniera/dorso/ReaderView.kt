@@ -35,9 +35,7 @@ import com.cerniera.kit.withAlpha
 import java.io.File
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.acos
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONArray
@@ -59,10 +57,11 @@ import org.json.JSONObject
  * or type size, the pages are cut afresh so that line starts the left page ([Pager]).
  *
  * The doctrine:
- * - Membrane: a page is one sheet hinged at the spine (on the main screen, the crease itself). Drag
- *   its edge and it lifts, bends and turns over, the fore-edge leading and the spine side following,
- *   the next page showing beneath and this page's print faintly through its back. Let go past
- *   halfway, or flick, and it falls over; otherwise it settles back. A tap turns it the same way.
+ * - Membrane: a page is one sheet hinged at the spine (on the main screen, the crease itself). Take
+ *   it anywhere and it rolls over a soft cylinder square to your pull, so lifting the lower corner
+ *   folds it diagonally, as paper does; the next page shows beneath, the roll casts a shadow, and the
+ *   print shows faintly through. Let go past halfway, or flick, and it goes over with the sound of
+ *   paper; otherwise it settles back. A tap lifts it from the lower corner the same way.
  * - Concentrato: turn quickly and the running heads and folios fall away, leaving only text; they
  *   return when you stop.
  * - Giulietta: no toolbar. Touch the top edge for type and the shelf; touch the spine for the shelf.
@@ -108,13 +107,17 @@ class ReaderView(c: Context) : View(c) {
     private val shade = Paint()
     private val line = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // ---- Turning: the leaf between spread [leafA] and the one after it, [leafP] of the way over
-    private val leaf = Leaf()
+    // ---- Turning: the leaf between spread [leafA] and the one after it, held by the hand
+    private val leaf = Leaf().apply { dpScale = c.resources.displayMetrics.density }
     private var leafA = -1
-    private var leafP = 0f
+    /** Which side the leaf started on: 1 the recto (turning forward), -1 the verso (turning back). */
+    private var sigma = 1
     private var leafAnim: ValueAnimator? = null
-    private val leafShadow = Paint()
-    private val pt = FloatArray(2)
+    private var rectoBmp: Bitmap? = null
+    private var versoBmp: Bitmap? = null
+
+    /** The sound of the paper, played as a page goes over. */
+    var paper: Paper? = null
     private var lastTurnAt = 0L
     private var chromeAlpha = 1f
     private var chromeAnim: ValueAnimator? = null
@@ -371,17 +374,18 @@ class ReaderView(c: Context) : View(c) {
 
     // ---- Turning and touch
 
-    /** A tap or a key: the leaf turns over by itself. */
+    /** A tap or a key: the leaf turns over by itself, lifted from its lower corner. */
     fun turn(dir: Int): Boolean {
         settleNow()
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
         val quick = concentrato()
-        beginLeaf(min(spread, target))
-        leafP = if (dir > 0) 0f else pEnd
+        beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
+        leaf.take(leaf.len, leaf.breadth * .8f)
         spread = target
         moved()
-        animateLeaf(if (dir > 0) pEnd else 0f, if (quick) 300L else 640L, landed = true)
+        paper?.turn(quick)
+        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .09f, ms = if (quick) 300L else 720L, landed = true)
         return true
     }
 
@@ -407,80 +411,81 @@ class ReaderView(c: Context) : View(c) {
 
     // ---- The leaf
 
-    /** How far a turn goes: on one page there is no left page to lie on, so the sheet leaves once past upright. */
-    private val pEnd get() = if (mode == Mode.SINGLE) .66f else 1f
     private val across get() = mode != Mode.STACK
 
-    /** Places a leaf point (distance from the spine, position along it) on the screen. */
+    /** Places a leaf point (distance from the spine on the side it started, position along the spine) on the screen. */
     private val toScreen: (Float, Float, FloatArray) -> Unit = { u, v, out ->
-        if (across) { out[0] = split + u; out[1] = v } else { out[0] = v; out[1] = split + u }
+        val d = sigma * u
+        if (across) { out[0] = split + d; out[1] = v } else { out[0] = v; out[1] = split + d }
     }
+    private fun frameU(x: Float, y: Float) = sigma * ((if (across) x else y) - split)
+    private fun frameV(x: Float, y: Float) = if (across) y else x
 
-    /** Prints both sides of the sheet between spread [a] and the next: its recto is [a]'s right page, its verso the next one's left. */
-    private fun beginLeaf(a: Int) {
-        leafA = a
+    /**
+     * Prints both sides of the sheet between spread [a] and the next: its recto is [a]'s right page,
+     * its verso the next one's left (on one page, plain paper), each with the other's print faintly
+     * through it. [side] is the side it starts on.
+     */
+    private fun beginLeaf(a: Int, side: Int) {
+        leafA = a; sigma = side
         val len = if (across) max(split, width - split) else max(split, height - split)
         val breadth = if (across) height.toFloat() else width.toFloat()
         leaf.size(len, breadth)
         val w = ceil(len).toInt().coerceAtLeast(1); val h = breadth.toInt().coerceAtLeast(1)
         fun bmp(old: Bitmap?) = old?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val paper = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .045f) else Kit.GROUND
-        // From the screen into the leaf's frame: u from the spine outwards, v along it
-        fun frame(verso: Boolean) = Matrix().apply {
-            val k = if (verso) -1f else 1f
+        val paperColour = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .045f) else Kit.GROUND
+        // From the screen into a leaf frame: u from the spine outwards on the recto (k = 1) or verso (k = -1) side
+        fun frame(k: Float) = Matrix().apply {
             setValues(if (across) floatArrayOf(k, 0f, -k * split, 0f, 1f, 0f, 0f, 0f, 1f)
                       else floatArrayOf(0f, k, -k * split, 1f, 0f, 0f, 0f, 0f, 1f))
         }
-        val r = bmp(leaf.recto).also { leaf.recto = it }
+        val single = mode == Mode.SINGLE
+        val r = bmp(rectoBmp).also { rectoBmp = it }
         Canvas(r).apply {
-            drawColor(paper); concat(frame(false))
-            pageAt(a, if (mode == Mode.SINGLE) 0 else 1)?.let { drawPage(this, it, textRects[if (mode == Mode.SINGLE) 0 else 1], if (mode == Mode.SINGLE) 0 else 1) }
+            drawColor(paperColour); concat(frame(1f))
+            val sd = if (single) 0 else 1
+            pageAt(a, sd)?.let { drawPage(this, it, textRects[sd], sd) }
         }
-        val vs = bmp(leaf.verso?.takeIf { it !== r }).also { leaf.verso = it }
+        val vs = bmp(versoBmp).also { versoBmp = it }
         Canvas(vs).apply {
-            drawColor(paper)
-            if (mode != Mode.SINGLE) { save(); concat(frame(true)); pageAt(a + 1, 0)?.let { drawPage(this, it, textRects[0], 0) }; restore() }
-            // The other side's print, faintly through the paper
-            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 14 else 20 })
+            drawColor(paperColour)
+            if (!single) { save(); concat(frame(-1f)); pageAt(a + 1, 0)?.let { drawPage(this, it, textRects[0], 0) }; restore() }
+            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 8 else 11 })
         }
+        // Show-through the other way too, now the verso is printed
+        if (!single) Canvas(r).drawBitmap(vs, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 6 else 8 })
+        leaf.front = if (side > 0) r else vs
+        leaf.back = if (side > 0) vs else r
+        leaf.shaders()
     }
 
     private fun pageAt(s: Int, side: Int): Int? = spreads.getOrNull(s)?.get(side)?.takeIf { it >= 0 }
 
     private fun drawTurn(c: Canvas) {
         val a = leafA
-        // Beneath: this spread's left page, and the next one's right page (on one page, the next page)
+        // Beneath: this spread's left page, and the next one's right page (on one page, the page beneath)
         if (mode == Mode.SINGLE) pageAt(a + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
         else {
             pageAt(a, 0)?.let { drawPage(c, it, textRects[0], 0) }
             pageAt(a + 1, 1)?.let { drawPage(c, it, textRects[1], 1) }
         }
-        leaf.shape(leafP)
-        val lift = kotlin.math.sin(PI * leafP).toFloat().coerceIn(0f, 1f)
-        // Its shadow on the page beneath, just past its edge
-        val reach = leaf.reach
-        if (lift > .01f) {
-            val dir = if (reach >= 0f) 1f else -1f
-            val w = (8f + 34f * lift) * dp
-            val e0 = split + reach; val e1 = e0 + dir * w
-            val dark = withAlpha(0x000000, (if (Kit.dark) .55f else .22f) * lift)
-            val clear = withAlpha(0x000000, 0f)
-            leafShadow.shader = if (across) LinearGradient(e0, 0f, e1, 0f, dark, clear, Shader.TileMode.CLAMP)
-                                else LinearGradient(0f, e0, 0f, e1, dark, clear, Shader.TileMode.CLAMP)
-            val lo = min(e0, e1); val hi = max(e0, e1)
-            if (across) c.drawRect(lo, 0f, hi, height.toFloat(), leafShadow) else c.drawRect(0f, lo, width.toFloat(), hi, leafShadow)
-        }
-        leaf.draw(c, toScreen, withAlpha(Kit.INK and 0xFFFFFF, if (Kit.dark) .22f else .12f), lift)
+        leaf.shape(toScreen)
+        leaf.drawShadow(c, toScreen, if (Kit.dark) .5f else .17f, width, height)
+        leaf.draw(c)
     }
 
-    private fun animateLeaf(to: Float, fullMs: Long, landed: Boolean) {
+    /** Carries the hand to (u, v) in the leaf's frame, the corner rising by [arc] on the way. */
+    private fun sweep(u: Float, v: Float, arc: Float, ms: Long, landed: Boolean) {
         leafAnim?.run { removeAllListeners(); cancel() }
-        val from = leafP
-        val share = (abs(to - from) / pEnd).coerceIn(.2f, 1f)
-        leafAnim = ValueAnimator.ofFloat(from, to).apply {
-            duration = (fullMs * share).toLong()
-            interpolator = Kit.ease
-            addUpdateListener { leafP = it.animatedValue as Float; invalidate() }
+        val u0 = leaf.handU; val v0 = leaf.handV
+        leafAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ms
+            interpolator = if (arc > 0f) Kit.ease else android.view.animation.DecelerateInterpolator(1.6f)
+            addUpdateListener {
+                val t = it.animatedValue as Float
+                leaf.hold(u0 + (u - u0) * t, v0 + (v - v0) * t - arc * kotlin.math.sin(PI * t).toFloat())
+                invalidate()
+            }
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(an: Animator) {
                     leafA = -1; invalidate()
@@ -502,8 +507,6 @@ class ReaderView(c: Context) : View(c) {
     private val slop = ViewConfiguration.get(c).scaledTouchSlop
     private var downX = 0f; private var downY = 0f
     private var dragging = false
-    private var grab = 0f
-    private var edgeAtGrab = 0f
     private var velocity: VelocityTracker? = null
 
     private fun along(e: MotionEvent) = if (across) e.x else e.y
@@ -513,20 +516,22 @@ class ReaderView(c: Context) : View(c) {
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
         settleNow()
-        beginLeaf(min(spread, target))
-        leafP = if (dir > 0) 0f else pEnd
-        grab = along(e)
-        // On one page, going back, the previous page arrives from off the edge: its fore-edge comes to the finger
-        edgeAtGrab = if (mode == Mode.SINGLE && dir < 0) grab - split else leaf.len * cos(PI * leafP).toFloat()
+        beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
+        if (mode == Mode.SINGLE && dir < 0) {
+            // The previous page is off the edge: take its fore-edge, level with the finger, and bring it in
+            leaf.take(leaf.len, frameV(downX, downY))
+        } else {
+            leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
+        }
         dragging = true
-        follow(e)
         parent?.requestDisallowInterceptTouchEvent(true)
+        follow(e)
         return true
     }
 
     private fun follow(e: MotionEvent) {
-        val edge = edgeAtGrab + (along(e) - grab)
-        leafP = (acos((edge / leaf.len).coerceIn(-1f, 1f)) / PI).toFloat().coerceIn(0f, pEnd)
+        val u = frameU(e.x, e.y)
+        leaf.hold(u, frameV(e.x, e.y))
         invalidate()
     }
 
@@ -534,15 +539,18 @@ class ReaderView(c: Context) : View(c) {
         dragging = false
         val vt = velocity
         vt?.computeCurrentVelocity(1000)
-        val v = vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f
-        val fast = 420f * dp
-        // Moving towards the spine side carries the leaf over; a flick decides, else halfway does
-        val over = when { v < -fast -> true; v > fast -> false; else -> leafP > pEnd / 2 }
+        val v = sigma * (vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f)
+        val fast = 380f * dp
+        // Carried towards the spine and past it, or flicked that way, it goes over; else it settles back
+        // On one page the spine is the screen's edge, out of reach: past the middle is far enough
+        val halfway = when { mode != Mode.SINGLE -> .5f; sigma > 0 -> .3f; else -> .72f }
+        val over = when { v < -fast -> true; v > fast -> false; else -> leaf.progress > halfway }
         val a = leafA
-        val now = if (over) a + 1 else a
+        val now = if (over == (sigma > 0)) a + 1 else a
         val changed = now != spread
-        if (changed) { concentrato(); spread = now; moved() }
-        animateLeaf(if (over) pEnd else 0f, 520L, landed = changed)
+        if (changed) { val quick = concentrato(); spread = now; moved(); paper?.turn(quick) }
+        val remaining = if (over) 1f - leaf.progress else leaf.progress
+        sweep(if (over) -leaf.grabU else leaf.grabU, leaf.grabV, arc = 0f, ms = (180 + 380 * remaining).toLong(), landed = changed)
     }
 
     private fun fadeChrome(to: Float, ms: Long) {

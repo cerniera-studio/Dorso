@@ -163,15 +163,11 @@ if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 
 # On the nightstand: the widget's drawing of the book being read, at its usual size and a larger one,
-# photographed on a wallpaper-like ground; and an update broadcast to the provider must not crash
+# saved as drawn (clear ground); and an update broadcast to the provider must not crash
 for sz in 110,190 170,280; do
   adb shell am start -W -n $PKG/.MainActivity --es nightstand $sz >/dev/null; sleep 4
-  adb exec-out run-as $PKG cat files/nightstand.png > "nightstand-${sz/,/x}.png"
-  if [ -s "nightstand-${sz/,/x}.png" ]; then
-    python3 -c "
-from PIL import Image
-im=Image.open('nightstand-${sz/,/x}.png').convert('RGBA'); g=Image.new('RGBA',im.size,(58,72,86,255)); g.alpha_composite(im); g.convert('RGB').save('shot-nightstand-${sz/,/x}.png')"
-    echo "::notice::nightstand drawn at ${sz} dp"
+  adb exec-out run-as $PKG cat files/nightstand.png > "shot-nightstand-${sz/,/x}.png"
+  if [ -s "shot-nightstand-${sz/,/x}.png" ]; then echo "::notice::nightstand drawn at ${sz} dp"
   else echo "::error::nightstand not drawn at ${sz}"; fail=1; fi
 done
 adb shell am broadcast -a android.appwidget.action.APPWIDGET_UPDATE -n $PKG/.Nightstand --eia appWidgetIds 1 >/dev/null; sleep 2

@@ -911,11 +911,23 @@ class ReaderView(c: Context) : View(c) {
     private var velocity: VelocityTracker? = null
 
     private fun along(e: MotionEvent) = if (across) e.x else e.y
+    private fun along(e: MotionEvent, h: Int) = if (across) e.getHistoricalX(h) else e.getHistoricalY(h)
+
+    private val trail = FloatArray(8); private val trailT = LongArray(8); private var trailN = 0
+    private fun note(pos: Float, t: Long) { val i = trailN % 8; trail[i] = pos; trailT[i] = t; trailN++ }
+    /** px a second along the turning axis over the last ~80 ms of the finger's path. */
+    private fun trailSpeed(): Float {
+        if (trailN < 2) return 0f
+        val last = (trailN - 1) % 8; val tEnd = trailT[last]
+        var k = trailN - 2; var first = last
+        while (k >= 0 && k > trailN - 8 && tEnd - trailT[k % 8] <= 80) { first = k % 8; k-- }
+        val dt = (tEnd - trailT[first]) / 1000f
+        return if (dt <= 0f) 0f else (trail[last] - trail[first]) / dt
+    }
     private fun acrossOf(e: MotionEvent) = if (across) e.y else e.x
 
     private fun startDrag(e: MotionEvent, dir: Int): Boolean {
         if (closed) {
-            android.util.Log.i("Dorso", "cover drag start dir=$dir style=${style()} leafA=$leafA running=${spring.running}")
             if (width > height) { changeCover(dir); return false }
             settleNow(); beginJacket(Math.floorMod(style() + dir, Jacket.names.size))
             leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
@@ -1009,7 +1021,8 @@ class ReaderView(c: Context) : View(c) {
         dragging = false
         val vt = velocity
         vt?.computeCurrentVelocity(1000)
-        val v = sigma * (vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f)
+        val tracked = vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f
+        val v = sigma * (if (kotlin.math.abs(tracked) > 1f) tracked else trailSpeed())
         val fast = 380f * dp
         // Carried towards the spine and past it, or flicked that way, it goes over; else it settles back
         // On one page the spine is the screen's edge, out of reach: past the middle is far enough
@@ -1021,11 +1034,9 @@ class ReaderView(c: Context) : View(c) {
         val reached = ((leaf.grabU - spring.tu) / (2 * leaf.grabU)).coerceIn(0f, 1f)
         val over = when { v < -fast -> true; v > fast -> false; else -> max(reached, leaf.progress) > halfway }
         if (fromJacket) {
-            android.util.Log.i("Dorso", "cover release v=$v reached=$reached progress=${leaf.progress} over=$over to=$jacketTo")
             if (over) paper?.cover()
             val to = jacketTo
             fall(over, v, landed = over) {
-                android.util.Log.i("Dorso", "cover landed over=$over to=$to")
                 if (over) setCover(to)
                 fromJacket = false
             }
@@ -1086,15 +1097,17 @@ class ReaderView(c: Context) : View(c) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (closed && e.actionMasked != MotionEvent.ACTION_MOVE) android.util.Log.i("Dorso", "touch ${MotionEvent.actionToString(e.actionMasked)} x=${e.x} dragging=$dragging leafA=$leafA")
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = e.x; downY = e.y; dragging = false; folding = false
+                downX = e.x; downY = e.y; dragging = false; folding = false; trailN = 0
                 cornerSide = cornerAt(e.x, e.y)
                 velocity?.recycle(); velocity = VelocityTracker.obtain()
             }
         }
         velocity?.addMovement(e)
+        // Our own short record of where the finger was, for the flick's speed when the tracker has none
+        for (h in 0 until e.historySize) note(along(e, h), e.getHistoricalEventTime(h))
+        note(if (across) e.x else e.y, e.eventTime)
         // A finger on a page's top outer corner, moving in and down, folds the corner
         if (cornerSide >= 0 && !dragging) {
             val k = corner(cornerSide)
@@ -1124,7 +1137,8 @@ class ReaderView(c: Context) : View(c) {
         if (dragging) {
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> follow(e)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> release()
+                MotionEvent.ACTION_UP -> { follow(e); release() }
+                MotionEvent.ACTION_CANCEL -> release()
             }
             return true
         }

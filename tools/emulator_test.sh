@@ -163,6 +163,6 @@ if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 
 if crashed; then echo "::error::Dorso crashed"; fail=1; fi
-{ echo "Dorso log"; adb logcat -d -s AndroidRuntime:E Dorso:I; } > app-log.txt
+{ echo "Dorso log"; adb logcat -d -s AndroidRuntime:E; } > app-log.txt
 adb shell wm size reset; adb shell wm density reset
 exit $fail

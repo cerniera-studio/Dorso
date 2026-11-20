@@ -7,9 +7,9 @@ import android.media.SoundPool
 import kotlin.random.Random
 
 /**
- * The sound of a page going over: a swish of air across paper, a little crackle, and a soft flap as
- * it lands. Three takes (synthesised by tools/leaf_sound.py), never the same one twice running, each
- * at a slightly different pitch, so a chapter of turns doesn't tick like a metronome. A quick turn is
+ * The sound of a page going over: real recordings of book pages (Kenney's RPG Audio, CC0; see
+ * tools/sound), a full turn and a quick flip, never the same one twice running, each at a slightly
+ * different pitch, so a chapter of turns doesn't tick like a metronome. A quick turn is
  * quieter and higher, as a flicked page is. Silent when the phone is on silent or vibrate, or when
  * turned off on the trim.
  */
@@ -22,7 +22,7 @@ class Paper(context: Context) {
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build())
         .build()
-    private val takes = listOf(R.raw.leaf_1, R.raw.leaf_2, R.raw.leaf_3).map { pool.load(context, it, 1) }
+    private val takes = listOf(R.raw.leaf_1, R.raw.leaf_2).map { pool.load(context, it, 1) }
     private var last = -1
     var on = true
 

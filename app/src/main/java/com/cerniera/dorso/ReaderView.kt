@@ -1015,7 +1015,10 @@ class ReaderView(c: Context) : View(c) {
         // Drawing a page back in, a quarter of the way is enough to bring it back
         val halfway = when { mode != Mode.SINGLE -> .5f; pulling -> .75f; else -> .3f }
         pulling = false
-        val over = when { v < -fast -> true; v > fast -> false; else -> leaf.progress > halfway }
+        // Judge by where the finger let go, not where the sheet has reached: it trails the hand by
+        // a little, and a quick flick lets go before it catches up
+        val reached = ((leaf.grabU - spring.tu) / (2 * leaf.grabU)).coerceIn(0f, 1f)
+        val over = when { v < -fast -> true; v > fast -> false; else -> max(reached, leaf.progress) > halfway }
         if (fromJacket) {
             if (over) paper?.cover()
             val to = jacketTo

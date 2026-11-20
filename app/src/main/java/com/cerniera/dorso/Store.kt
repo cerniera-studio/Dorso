@@ -18,10 +18,18 @@ data class Block(val kind: Int, val text: String) {
 data class Article(
     val id: String, val url: String, val title: String, val byline: String, val site: String,
     val blocks: List<Block>, val savedAt: Long, var offset: Int = 0, var progress: Float = 0f, var openedAt: Long = 0L,
+    /** Dog-eared pages: where each starts, and the size of its fold. */
+    val marks: MutableList<Mark> = mutableListOf(),
 ) {
     val words get() = blocks.sumOf { b -> b.text.split(' ').count { it.isNotBlank() } }
     val minutes get() = (words / 230).coerceAtLeast(1)
 }
+
+/**
+ * A folded corner: the page starting at [offset] (a character, so it survives a change of type),
+ * folded [along] dp along the top edge and [down] dp down the outer edge.
+ */
+data class Mark(val offset: Int, val along: Float, val down: Float)
 
 /** Reads kept as one JSON file each in the app's own files. Nothing leaves the phone. */
 object Store {
@@ -42,6 +50,7 @@ object Store {
     private fun write(a: Article) = JSONObject().apply {
         put("id", a.id); put("url", a.url); put("title", a.title); put("byline", a.byline); put("site", a.site)
         put("savedAt", a.savedAt); put("offset", a.offset); put("progress", a.progress.toDouble()); put("openedAt", a.openedAt)
+        put("marks", JSONArray().apply { a.marks.forEach { m -> put(JSONArray().put(m.offset).put(m.along.toDouble()).put(m.down.toDouble())) } })
         put("blocks", JSONArray().apply { a.blocks.forEach { b -> put(JSONObject().put("k", b.kind).put("t", b.text)) } })
     }
 
@@ -50,6 +59,8 @@ object Store {
         val arr = o.getJSONArray("blocks")
         val blocks = (0 until arr.length()).map { i -> arr.getJSONObject(i).let { Block(it.getInt("k"), it.getString("t")) } }
         return Article(o.getString("id"), o.getString("url"), o.getString("title"), o.optString("byline"), o.optString("site"),
-            blocks, o.getLong("savedAt"), o.optInt("offset"), o.optDouble("progress", 0.0).toFloat(), o.optLong("openedAt"))
+            blocks, o.getLong("savedAt"), o.optInt("offset"), o.optDouble("progress", 0.0).toFloat(), o.optLong("openedAt"),
+            o.optJSONArray("marks")?.let { m -> (0 until m.length()).map { i -> m.getJSONArray(i).let { Mark(it.getInt(0), it.getDouble(1).toFloat(), it.getDouble(2).toFloat()) } }.toMutableList() }
+                ?: mutableListOf())
     }
 }

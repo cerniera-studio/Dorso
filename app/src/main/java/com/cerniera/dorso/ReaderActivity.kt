@@ -16,10 +16,13 @@ import androidx.window.java.layout.WindowInfoTrackerCallbackAdapter
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowLayoutInfo
+import com.cerniera.kit.Card
 import com.cerniera.kit.Crash
 import com.cerniera.kit.Kit
 import com.cerniera.kit.pressable
 import com.cerniera.kit.px
+import com.cerniera.kit.Row
+import com.cerniera.kit.Sheet
 import com.cerniera.kit.rounded
 import com.cerniera.kit.text
 
@@ -57,6 +60,7 @@ class ReaderActivity : Activity() {
             onTopEdge = { showTrim(true) }
             onSpine = { finish() }
             onMiddle = { showTrim(trim.visibility != View.VISIBLE) }
+            onMarks = { article?.let { Store.put(this@ReaderActivity, it) } }
         }
         trim = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -73,6 +77,7 @@ class ReaderActivity : Activity() {
                 (tapped as android.widget.TextView).text = if (paper.on) "Sound" else "Silent"
                 if (paper.on) paper.turn(false)
             })
+            addView(button("Marks") { showMarks() })
             addView(button("Shelf") { finish() })
         }
         val root = FrameLayout(this)
@@ -98,6 +103,24 @@ class ReaderActivity : Activity() {
     override fun onDestroy() {
         if (::paper.isInitialized) paper.release()
         super.onDestroy()
+    }
+
+    /** The folded pages, each with its opening words; tap one to turn to it. */
+    private fun showMarks() {
+        val a = article ?: return
+        Sheet.show(this, "Marks") { sh ->
+            if (a.marks.isEmpty()) {
+                sh.body.addView(text("No folded pages yet. Take a page's top corner and fold it down to mark it; tap the fold to smooth it out.", 14.5f, Kit.MUTED).apply { setLineSpacing(0f, 1.3f) })
+                return@show
+            }
+            val card = Card(this)
+            for (m in a.marks) {
+                val words = reader.wordsAt(m.offset)
+                val pct = (100 * reader.fractionAt(m.offset)).toInt()
+                card.row(Row(this, words, "$pct% of the way in", null) { sh.dismiss(); reader.goTo(m.offset) })
+            }
+            sh.body.addView(card)
+        }
     }
 
     private fun prefs() = getSharedPreferences("dorso", Context.MODE_PRIVATE)

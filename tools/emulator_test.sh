@@ -105,6 +105,22 @@ sleep 1.6
 adb exec-out screencap -p > shot-jacket-open.png
 if [ "$(closedq)" = "False" ] && [ "$(offset)" = "$b" ]; then echo "::notice::jacket opened onto the same page"; else echo "::error::jacket did not open cleanly (closed=$(closedq), offset $b -> $(offset))"; fail=1; fi
 if crashed; then echo "::error::crash opening the jacket"; fail=1; fi
+
+# Dog-ear: fold the page's top corner down (photographed mid-fold), let go: the page is marked.
+# Unfolded it's still there on its page; a tap on the fold smooths it out.
+marksq() { layout | python3 -c "import json,sys; print(json.load(sys.stdin).get('marks'))"; }
+adb shell input motionevent DOWN 712 14
+for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 712 - 24 * i )) $(( 14 + 26 * i )); done
+sleep 0.3; adb exec-out screencap -p > shot-dogear-folding.png
+adb shell input motionevent UP 568 170
+sleep 1; adb exec-out screencap -p > shot-dogear.png
+if [ "$(marksq)" = "1" ]; then echo "::notice::dog-ear: page marked"; else echo "::error::dog-ear did not mark the page (marks=$(marksq))"; fail=1; fi
+size 1503 1568; sleep 2; adb exec-out screencap -p > shot-dogear-main.png
+size 719 1680; sleep 2
+adb shell input tap 360 900; sleep 1.5        # the book shut on folding: open the jacket
+adb shell input tap 704 22; sleep 1
+if [ "$(marksq)" = "0" ]; then echo "::notice::dog-ear: a tap smoothed it out"; else echo "::error::tap on the fold did not unmark (marks=$(marksq))"; fail=1; fi
+if crashed; then echo "::error::crash with the dog-ear"; fail=1; fi
 adb shell input tap 360 60; sleep 1
 adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2

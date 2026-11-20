@@ -52,6 +52,9 @@ import org.json.JSONObject
  *   ever sits under the hinge. If the crease runs across (main screen turned, or the phone half
  *   folded that way), one page above it and one below.
  * - Text never sits under the camera hole: a page it would touch starts below it.
+ * - Dog-ears: take a page's top outer corner and draw it in and down, and the corner folds over
+ *   along a crease set by your finger (up to a quarter of the page down), marking the page. A tap
+ *   on the fold smooths it out. Marks are kept by character, so they survive a change of type.
  * - The jacket: on the cover screen the book is shut (when it opens there, or when the phone folds
  *   shut under it), showing its printed jacket ([Jacket]). Tap it or take its edge and it opens on
  *   the same leaf as the pages, onto the endpaper and then your page. Unfolded, it lies open.
@@ -121,6 +124,14 @@ class ReaderView(c: Context) : View(c) {
 
     /** The sound of the paper, played as a page goes over. */
     var paper: Paper? = null
+
+    // ---- Dog-ears: a page's top outer corner folded down marks it
+    /** Called when a page is marked or unmarked, to save the read. */
+    var onMarks: (() -> Unit)? = null
+    private var cornerSide = -1          // the page whose corner the finger came down on
+    private var folding = false
+    private var foldU = 0f; private var foldW = 0f
+    private var fadeMark: Mark? = null; private var fadePage = -1; private var fadeK = 0f
 
     // ---- The jacket: on the cover screen the book is shut, until you open it
     /** True while the jacket is showing. Shut when the book opens on the cover screen or the phone folds shut. */
@@ -367,6 +378,7 @@ class ReaderView(c: Context) : View(c) {
         c.translate(r.left, r.top - top)
         lay.draw(c)
         c.restore()
+        drawEar(c, page, side)
         if (chromeAlpha <= 0.01f) return
         // Running head: the site on the left page, the title on the right (or the title alone)
         val a = article ?: return
@@ -382,6 +394,116 @@ class ReaderView(c: Context) : View(c) {
         chrome.letterSpacing = .04f
         chrome.textSize = 11.5f * dp * resources.configuration.fontScale
         c.drawText("${page + 1}", r.centerX(), r.bottom + 26f * dp, chrome)
+    }
+
+    // ---- Dog-ears
+
+    /** The top outer corner of the page on [side]: x, y, and which way is inward along the top. */
+    private fun corner(side: Int): FloatArray = when (mode) {
+        Mode.SINGLE -> floatArrayOf(width.toFloat(), 0f, -1f)
+        Mode.SIDE -> if (side == 0) floatArrayOf(0f, 0f, 1f) else floatArrayOf(width.toFloat(), 0f, -1f)
+        Mode.STACK -> if (side == 0) floatArrayOf(width.toFloat(), 0f, -1f) else floatArrayOf(width.toFloat(), split + gutterW / 2, -1f)
+    }
+
+    private fun pageW(side: Int) = when (mode) {
+        Mode.SIDE -> if (side == 0) split - gutterW / 2 else width - split - gutterW / 2
+        else -> width.toFloat()
+    }
+    private fun pageH(side: Int) = when (mode) {
+        Mode.STACK -> if (side == 0) split - gutterW / 2 else height - split - gutterW / 2
+        else -> height.toFloat()
+    }
+    /** As far as a fold may go: a quarter of the page down, nearly half across. */
+    private fun maxAlong(side: Int) = pageW(side) * .45f
+    private fun maxDown(side: Int) = pageH(side) * .25f
+
+    private fun pageStart(page: Int) = layout?.getLineStart(starts[page]) ?: 0
+    private fun pageEnd(page: Int) = if (page + 1 < starts.size) pageStart(page + 1) else Int.MAX_VALUE
+    private fun markOn(page: Int): Mark? = article?.marks?.firstOrNull { it.offset >= pageStart(page) && it.offset < pageEnd(page) }
+
+    private fun pageOnSide(side: Int): Int? = if (mode == Mode.SINGLE && side == 1) null else pageAt(spread, side)
+
+    private fun drawEar(c: Canvas, page: Int, side: Int) {
+        val k = corner(side)
+        val live = folding && cornerSide == side && pageOnSide(side) == page && leafA < 0
+        if (live) {
+            DogEar.crease(foldU, foldW, maxAlong(side), maxDown(side))?.let { DogEar.draw(c, k[0], k[1], k[2], it[0], it[1], dp) }
+            return
+        }
+        markOn(page)?.let { DogEar.draw(c, k[0], k[1], k[2], it.along * dp, it.down * dp, dp); return }
+        if (fadePage == page) fadeMark?.let { DogEar.draw(c, k[0], k[1], k[2], it.along * dp * fadeK, it.down * dp * fadeK, dp) }
+    }
+
+    /** The side whose top outer corner is under (x, y), within a finger's reach. */
+    private fun cornerAt(x: Float, y: Float): Int {
+        if (closed || leafA >= 0) return -1
+        val reach = 56f * dp
+        for (side in 0..1) {
+            val page = pageOnSide(side) ?: continue
+            val k = corner(side)
+            val u = (x - k[0]) * k[2]; val w = y - k[1]
+            val m = markOn(page)
+            if (m != null) continue        // a folded corner is unfolded by a tap on it
+            if (u in -8f * dp..reach && w in -8f * dp..reach) return side
+        }
+        return -1
+    }
+
+    /** A tap on a folded corner unfolds it. */
+    private fun tapOnEar(x: Float, y: Float): Boolean {
+        if (closed || leafA >= 0) return false
+        for (side in 0..1) {
+            val page = pageOnSide(side) ?: continue
+            val m = markOn(page) ?: continue
+            val k = corner(side)
+            if (DogEar.hit(x, y, k[0], k[1], k[2], m.along * dp, m.down * dp, 14f * dp)) { unmark(page, m); return true }
+        }
+        return false
+    }
+
+    private fun mark(side: Int) {
+        val page = pageOnSide(side) ?: return
+        val cr = DogEar.crease(foldU, foldW, maxAlong(side), maxDown(side)) ?: return
+        if (kotlin.math.hypot(foldU, foldW) < 26f * dp) return
+        val a = article ?: return
+        markOn(page)?.let { a.marks.remove(it) }
+        a.marks += Mark(pageStart(page), cr[0] / dp, cr[1] / dp)
+        a.marks.sortBy { it.offset }
+        paper?.fold()
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        onMarks?.invoke(); record()
+    }
+
+    private fun unmark(page: Int, m: Mark) {
+        article?.marks?.remove(m)
+        fadeMark = m; fadePage = page
+        ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 260; interpolator = Kit.ease
+            addUpdateListener { fadeK = it.animatedValue as Float; invalidate() }
+            addListener(object : AnimatorListenerAdapter() { override fun onAnimationEnd(an: Animator) { fadeMark = null; fadePage = -1; invalidate() } })
+            start()
+        }
+        paper?.fold()
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        onMarks?.invoke(); record()
+    }
+
+    /** The opening words of the page starting at [off], for the list of marks. */
+    fun wordsAt(off: Int): String {
+        val t = layout?.text ?: return ""
+        val at = off.coerceIn(0, t.length)
+        val s = t.subSequence(at, (at + 90).coerceAtMost(t.length)).toString().replace('\n', ' ').trim()
+        return if (at + 90 < t.length) s.substringBeforeLast(' ') + "…" else s
+    }
+
+    fun fractionAt(off: Int): Float = layout?.text?.length?.takeIf { it > 0 }?.let { off.toFloat() / it } ?: 0f
+
+    /** Opens the book at [off] (a mark), as if you'd turned to it. */
+    fun goTo(off: Int) {
+        settleNow()
+        offset = off
+        relayout()
+        moved()
     }
 
     private fun drawProgress(c: Canvas) {
@@ -647,6 +769,7 @@ class ReaderView(c: Context) : View(c) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             val w = width.toFloat(); val h = height.toFloat()
+            if (tapOnEar(e.x, e.y)) return true
             when {
                 e.y < h * .1f -> onTopEdge?.invoke()
                 closed -> openJacket()
@@ -667,11 +790,30 @@ class ReaderView(c: Context) : View(c) {
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = e.x; downY = e.y; dragging = false
+                downX = e.x; downY = e.y; dragging = false; folding = false
+                cornerSide = cornerAt(e.x, e.y)
                 velocity?.recycle(); velocity = VelocityTracker.obtain()
             }
         }
         velocity?.addMovement(e)
+        // A finger on a page's top outer corner, moving in and down, folds the corner
+        if (cornerSide >= 0 && !dragging) {
+            val k = corner(cornerSide)
+            val fu = (e.x - k[0]) * k[2]; val fw = e.y - k[1]
+            if (!folding && e.actionMasked == MotionEvent.ACTION_MOVE && kotlin.math.hypot(e.x - downX, e.y - downY) > slop && e.y > downY) {
+                folding = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+                gestures.onTouchEvent(MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL })
+            }
+            if (folding) {
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_MOVE -> { foldU = fu.coerceAtLeast(0f); foldW = fw.coerceAtLeast(0f); invalidate() }
+                    MotionEvent.ACTION_UP -> { foldU = fu.coerceAtLeast(0f); foldW = fw.coerceAtLeast(0f); mark(cornerSide); folding = false; cornerSide = -1; invalidate() }
+                    MotionEvent.ACTION_CANCEL -> { folding = false; cornerSide = -1; invalidate() }
+                }
+                return true
+            }
+        }
         if (!dragging && e.actionMasked == MotionEvent.ACTION_MOVE) {
             val d = along(e) - (if (across) downX else downY)
             val side = acrossOf(e) - (if (across) downY else downX)
@@ -711,6 +853,7 @@ class ReaderView(c: Context) : View(c) {
         val o = JSONObject()
             .put("mode", mode.name)
             .put("closed", closed)
+            .put("marks", article?.marks?.size ?: 0)
             .put("view", JSONArray(listOf(width, height)))
             .put("pages", starts.size)
             .put("spread", JSONArray(listOf(sp[0], sp[1])))

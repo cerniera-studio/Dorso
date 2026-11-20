@@ -228,10 +228,12 @@ class ReaderView(c: Context) : View(c) {
         paint.typeface = Kit.sans(context, 400)
         paint.color = Kit.INK
 
-        val f = fold?.takeIf { it.right <= width + 1 && it.bottom <= height + 1 }
+        // A crease running down the middle is the spine. One running across (the main screen turned)
+        // is not: the book still lies open left and right, and pages turn left and right, as any
+        // book held in front of you does (Mechack, 20 Nov 2026). Mode.STACK is no longer chosen.
+        val f = fold?.takeIf { it.right <= width + 1 && it.bottom <= height + 1 && foldVertical && it.exactCenterX() in w * .3f..w * .7f }
         mode = when {
-            f != null && foldVertical && f.exactCenterX() in w * .3f..w * .7f -> Mode.SIDE
-            f != null && !foldVertical && f.exactCenterY() in h * .3f..h * .7f -> Mode.STACK
+            f != null -> Mode.SIDE
             wDp >= 600f -> Mode.SIDE
             else -> Mode.SINGLE
         }
@@ -528,12 +530,25 @@ class ReaderView(c: Context) : View(c) {
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
         val quick = concentrato()
+        val ms = if (quick) 300L else 720L
+        if (mode == Mode.SINGLE && dir < 0) {
+            // One page: the page before went over the left edge, so it comes back the same way, the
+            // same curl played backwards: from past the edge, lower corner leading
+            beginLeaf(target, 1)
+            leaf.take(leaf.len, leaf.breadth * .8f)
+            leaf.hold(-leaf.grabU, leaf.grabV)
+            spread = target
+            moved()
+            paper?.turn(quick)
+            sweep(leaf.grabU, leaf.grabV, arc = leaf.breadth * .09f, ms = ms, landed = true)
+            return true
+        }
         beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
         leaf.take(leaf.len, leaf.breadth * .8f)
         spread = target
         moved()
         paper?.turn(quick)
-        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .09f, ms = if (quick) 300L else 720L, landed = true)
+        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .09f, ms = ms, landed = true)
         return true
     }
 
@@ -695,6 +710,8 @@ class ReaderView(c: Context) : View(c) {
     private val slop = ViewConfiguration.get(c).scaledTouchSlop
     private var downX = 0f; private var downY = 0f
     private var dragging = false
+    /** One page, going back: the page before is being drawn back in over the left edge. */
+    private var pulling = false
     private var velocity: VelocityTracker? = null
 
     private fun along(e: MotionEvent) = if (across) e.x else e.y
@@ -713,11 +730,14 @@ class ReaderView(c: Context) : View(c) {
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
         settleNow()
-        beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
-        if (mode == Mode.SINGLE && dir < 0) {
-            // The previous page is off the edge: take its fore-edge, level with the finger, and bring it in
+        pulling = mode == Mode.SINGLE && dir < 0
+        if (pulling) {
+            // The page before went over the left edge: it comes back the way it went, its fold
+            // following the finger in from the edge (the same curl as going forward, backwards)
+            beginLeaf(target, 1)
             leaf.take(leaf.len, frameV(downX, downY))
         } else {
+            beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
             leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
         }
         dragging = true
@@ -727,7 +747,8 @@ class ReaderView(c: Context) : View(c) {
     }
 
     private fun follow(e: MotionEvent) {
-        val u = frameU(e.x, e.y)
+        // Drawing a page back in, the fold sits as far in from the edge as the finger has travelled
+        val u = if (pulling) -leaf.grabU + 2 * max(0f, frameU(e.x, e.y) - frameU(downX, downY)) else frameU(e.x, e.y)
         leaf.hold(u, frameV(e.x, e.y))
         invalidate()
     }
@@ -740,7 +761,9 @@ class ReaderView(c: Context) : View(c) {
         val fast = 380f * dp
         // Carried towards the spine and past it, or flicked that way, it goes over; else it settles back
         // On one page the spine is the screen's edge, out of reach: past the middle is far enough
-        val halfway = when { mode != Mode.SINGLE -> .5f; sigma > 0 -> .3f; else -> .72f }
+        // Drawing a page back in, a quarter of the way is enough to bring it back
+        val halfway = when { mode != Mode.SINGLE -> .5f; pulling -> .75f; else -> .3f }
+        pulling = false
         val over = when { v < -fast -> true; v > fast -> false; else -> leaf.progress > halfway }
         if (fromJacket) {
             if (over) paper?.cover()

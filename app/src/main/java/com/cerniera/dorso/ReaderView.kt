@@ -139,7 +139,14 @@ class ReaderView(c: Context) : View(c) {
     var closed = false; private set
     private var wasOpen: Boolean? = null
     private var fromJacket = false
-    private var jacketBmp: Bitmap? = null
+    /** Jacket drawings by design, for the size on screen. */
+    private val jackets = HashMap<Int, Bitmap>()
+    /** The design the cover is turning to, while it turns. */
+    private var jacketTo = -1
+    /** Called when the cover's design changes, to save the read. */
+    var onCover: (() -> Unit)? = null
+    /** Called when the shut book is tapped: unfold to read. */
+    var onShutTap: (() -> Unit)? = null
     private var lastTurnAt = 0L
     private var chromeAlpha = 1f
     private var chromeAnim: ValueAnimator? = null
@@ -171,6 +178,7 @@ class ReaderView(c: Context) : View(c) {
         }
         s = sb.length; sb.append('\n'); span(Rel(.9f), s)
         var indent = false
+        var opened = false
         for (b in a.blocks) {
             when (b.kind) {
                 Block.HEAD -> {
@@ -184,7 +192,23 @@ class ReaderView(c: Context) : View(c) {
                     span(Margin(1.4f, 1.4f), s); span(ForegroundColorSpan(Kit.MUTED), s)
                     indent = false
                 }
-                else -> {
+                else -> if (isCaption(b.text)) {
+                    // A photograph's caption, its picture left behind: set small, slanted and quiet
+                    s = sb.length; sb.append(b.text).append('\n')
+                    span(Rel(.8f), s); span(Slant(), s); span(ForegroundColorSpan(Kit.MUTED), s)
+                    indent = false
+                } else if (!opened && b.text.firstOrNull()?.isLetterOrDigit() == true && b.text.length > 120) {
+                    // The opening: a drop cap three lines deep, the rest of its line in small capitals
+                    opened = true
+                    s = sb.length
+                    val rest = b.text.substring(1)
+                    val lead = Regex("""^\S*(\s+\S+){0,3}""").find(rest)?.value.orEmpty()
+                    sb.append(lead.uppercase())
+                    span(Rel(.84f), s); span(Spacing(.07f), s)
+                    sb.append(rest.substring(lead.length)).append('\n')
+                    span(DropCap(b.text.substring(0, 1)), s)
+                    indent = true
+                } else {
                     s = sb.length; sb.append(b.text).append('\n')
                     if (indent) span(Margin(1.4f, 0f), s)
                     indent = true
@@ -192,6 +216,50 @@ class ReaderView(c: Context) : View(c) {
             }
         }
         return sb
+    }
+
+    /** A caption left behind by its photograph: short, ending in a credit in brackets. */
+    private fun isCaption(t: String) = t.length < 260 &&
+        Regex("""\([^()]*\b(Getty|Images?|Photo(graph)?s?|Reuters|AFP|AP|Illustration|Credit|Shutterstock|PA)\b[^()]*\)\s*$""").containsMatchIn(t)
+
+    /** Slanted type for captions (Jost has no italic): the face sheared, as a sign painter would. */
+    private class Slant : android.text.style.MetricAffectingSpan() {
+        override fun updateDrawState(tp: TextPaint) { tp.textSkewX = -.18f }
+        override fun updateMeasureState(tp: TextPaint) { tp.textSkewX = -.18f }
+    }
+
+    /** Letter-spacing, for the small capitals of the opening line. */
+    private class Spacing(val em: Float) : android.text.style.MetricAffectingSpan() {
+        override fun updateDrawState(tp: TextPaint) { tp.letterSpacing = em }
+        override fun updateMeasureState(tp: TextPaint) { tp.letterSpacing = em }
+    }
+
+    /** The opening's drop cap, resolved when the type size is known. */
+    private class DropCap(val letter: String)
+
+    /**
+     * A drop cap three lines deep: the letter in the display face, its cap height reaching from the
+     * first line's cap height to the third line's baseline, the lines beside it indented clear of it.
+     */
+    private inner class DropCapSpan(val letter: String, body: Float) : LeadingMarginSpan.LeadingMarginSpan2 {
+        private val lines = 3
+        private val lh = body * 1.42f
+        private val cp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Kit.display(context); color = Kit.INK
+            // Italiana's capitals stand about 0.7 of the size: span two line-heights and a cap
+            textSize = (2 * lh + .7f * body) / .7f
+        }
+        private val gap = body * .35f
+        private val w = (cp.measureText(letter) + gap).toInt()
+        override fun getLeadingMarginLineCount() = lines
+        override fun getLeadingMargin(first: Boolean) = if (first) w else 0
+        override fun drawLeadingMargin(c: Canvas, p: Paint, x: Int, dir: Int, top: Int, baseline: Int, bottom: Int,
+                                       text: CharSequence, start: Int, end: Int, first: Boolean, layout: Layout?) {
+            val sp = text as? Spanned ?: return
+            if (sp.getSpanStart(this) != start) return       // only on the paragraph's first line
+            cp.color = Kit.INK
+            c.drawText(letter, x.toFloat(), baseline + 2 * lh, cp)
+        }
     }
 
     /** A size relative to the body, resolved when the type size is known. */
@@ -208,6 +276,7 @@ class ReaderView(c: Context) : View(c) {
             val real: Any = when (o) {
                 is Rel -> AbsoluteSizeSpan((px * o.k).toInt())
                 is Margin -> LeadingMarginSpan.Standard((px * o.first).toInt(), (px * o.rest).toInt())
+                is DropCap -> DropCapSpan(o.letter, px)
                 else -> o
             }
             out.setSpan(real, st, en, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -319,12 +388,12 @@ class ReaderView(c: Context) : View(c) {
         // unfolded (or the cover turned sideways) it lies open. Folded or open is read from the
         // whole screen, never from Dorso's window: a narrow window in split screen or a pop-up
         // window on the main screen is not the phone folding (adaptive quality, 20 Nov 2026)
+        // On the cover screen the book is shut, always: the cover screen is the book's cover, and
+        // reading is for the open phone (Mechack, 20 Nov 2026: one page on the cover never read well)
         val open = Hinge.unfolded(context)
-        if (wasOpen == null) closed = mode == Mode.SINGLE && !open
-        else if (wasOpen == true && !open) closed = true
-        if (mode != Mode.SINGLE) closed = false
+        closed = !open
         wasOpen = open
-        jacketBmp = null
+        jackets.clear()
         record(colW, sizePx)
         invalidate()
     }
@@ -333,13 +402,74 @@ class ReaderView(c: Context) : View(c) {
 
     override fun onDraw(c: Canvas) {
         c.drawColor(Kit.GROUND)
+        if (!closed) { c.drawPaint(grain()); drawEdges(c) }
         drawSpine(c)
         when {
             leafA >= 0 -> drawTurn(c)
-            closed -> c.drawBitmap(jacket(), 0f, 0f, null)
+            closed -> drawJacket(c, style())
             else -> drawSpread(c, spread, 0f)
         }
         drawProgress(c)
+    }
+
+    // ---- Paper
+
+    private var grainPaint: Paint? = null
+    private var grainFor = 0
+
+    /**
+     * The paper's grain: a tile of fine flecks, a shade darker by day and lighter by night, laid
+     * over the page so it reads as a surface rather than a screen. Barely there by design.
+     */
+    private fun grain(): Paint {
+        grainPaint?.takeIf { grainFor == Kit.INK }?.let { return it }
+        val n = (160 * dp / 2.75f).toInt().coerceAtLeast(96)
+        val px = IntArray(n * n)
+        val r = kotlin.random.Random(7)
+        val ink = Kit.INK and 0xFFFFFF
+        for (i in px.indices) {
+            val x = r.nextFloat()
+            px[i] = when {
+                x < .045f -> withAlpha(ink, if (Kit.dark) .05f else .06f)
+                x < .055f -> withAlpha(if (Kit.dark) 0x000000 else 0xFFFFFF, .06f)
+                else -> 0
+            }
+        }
+        // A few fibres: short faint strokes, as in uncoated stock
+        val bmp = Bitmap.createBitmap(px, n, n, Bitmap.Config.ARGB_8888).copy(Bitmap.Config.ARGB_8888, true)
+        val fc = Canvas(bmp); val fp = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = .7f; color = withAlpha(ink, .035f) }
+        repeat(18) {
+            val x = r.nextFloat() * n; val y = r.nextFloat() * n; val a = r.nextFloat() * 6.28f; val l = 3f + 6f * r.nextFloat()
+            fc.drawLine(x, y, x + l * kotlin.math.cos(a), y + l * kotlin.math.sin(a), fp)
+        }
+        grainFor = Kit.INK
+        return Paint().apply { shader = android.graphics.BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) }.also { grainPaint = it }
+    }
+
+    /**
+     * The book's thickness: at the outer edges of an open spread, the edges of the pages already read
+     * (left) and still to come (right), a stack of hairlines that thins on one side as it grows on
+     * the other. You can see how far in you are without a number.
+     */
+    private fun drawEdges(c: Canvas) {
+        if (mode != Mode.SIDE || starts.isEmpty()) return
+        val sp = spreads.getOrNull(spread) ?: return
+        val shown = max(sp[0], sp[1]) + 1
+        val total = starts.size.coerceAtLeast(1)
+        val most = 7f * dp
+        fun stack(x0: Float, dir: Float, pages: Int) {
+            val t = (most * pages / max(total, 12)).coerceIn(if (pages > 0) 1.2f * dp else 0f, most)
+            if (t <= 0f) return
+            val n = (t / (1.15f * dp)).toInt().coerceAtLeast(1)
+            for (i in 0 until n) {
+                val x = x0 + dir * (i * 1.15f * dp + .5f * dp)
+                line.strokeWidth = .8f * dp
+                line.color = withAlpha(if (Kit.dark) 0xF3ECDD else 0x000000, (if (Kit.dark) .07f else .07f) * (1f - i / (n + 2f)))
+                c.drawLine(x, 0f, x, height.toFloat(), line)
+            }
+        }
+        stack(0f, 1f, shown - (if (sp[0] >= 0) 2 else 1).coerceAtLeast(0))
+        stack(width.toFloat(), -1f, total - shown)
     }
 
     private fun drawSpine(c: Canvas) {
@@ -525,7 +655,7 @@ class ReaderView(c: Context) : View(c) {
 
     /** A tap or a key: the leaf turns over by itself, lifted from its lower corner. */
     fun turn(dir: Int): Boolean {
-        if (closed) { if (dir > 0) openJacket(); return dir > 0 }
+        if (closed) { changeCover(dir); return true }
         settleNow()
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
@@ -596,7 +726,8 @@ class ReaderView(c: Context) : View(c) {
         leaf.size(len, breadth)
         val w = ceil(len).toInt().coerceAtLeast(1); val h = breadth.toInt().coerceAtLeast(1)
         fun bmp(old: Bitmap?) = old?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val paperColour = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .045f) else Kit.GROUND
+        // A lifted sheet catches more light than the page it leaves: at night that is what shows it
+        val paperColour = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .085f) else Kit.GROUND
         // From the screen into a leaf frame: u from the spine outwards on the recto (k = 1) or verso (k = -1) side
         fun frame(k: Float) = Matrix().apply {
             setValues(if (across) floatArrayOf(k, 0f, -k * split, 0f, 1f, 0f, 0f, 0f, 1f)
@@ -605,15 +736,17 @@ class ReaderView(c: Context) : View(c) {
         val single = mode == Mode.SINGLE
         val r = bmp(rectoBmp).also { rectoBmp = it }
         Canvas(r).apply {
-            drawColor(paperColour); concat(frame(1f))
+            drawColor(paperColour); drawPaint(grain()); concat(frame(1f))
             val sd = if (single) 0 else 1
             pageAt(a, sd)?.let { drawPage(this, it, textRects[sd], sd) }
         }
         val vs = bmp(versoBmp).also { versoBmp = it }
         Canvas(vs).apply {
-            drawColor(paperColour)
+            drawColor(paperColour); drawPaint(grain())
             if (!single) { save(); concat(frame(-1f)); pageAt(a + 1, 0)?.let { drawPage(this, it, textRects[0], 0) }; restore() }
-            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 8 else 11 })
+            // On one page the sheet's back is all you see as it goes: let its print show through
+            // more, as thin paper does held to the light, so the page never turns blank
+            drawBitmap(r, 0f, 0f, Paint().apply { alpha = if (single) (if (Kit.dark) 60 else 72) else if (Kit.dark) 8 else 11 })
         }
         // Show-through the other way too, now the verso is printed
         if (!single) Canvas(r).drawBitmap(vs, 0f, 0f, Paint().apply { alpha = if (Kit.dark) 6 else 8 })
@@ -628,15 +761,18 @@ class ReaderView(c: Context) : View(c) {
         val a = leafA
         // Beneath: this spread's left page, and the next one's right page (on one page, the page
         // beneath; under the jacket, the page you were on)
-        if (fromJacket) drawSpread(c, spread, 0f)
+        if (fromJacket) drawJacket(c, jacketTo)
         else if (mode == Mode.SINGLE) pageAt(a + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
         else {
             pageAt(a, 0)?.let { drawPage(c, it, textRects[0], 0) }
             pageAt(a + 1, 1)?.let { drawPage(c, it, textRects[1], 1) }
         }
         leaf.shape(toScreen)
-        leaf.drawShadow(c, toScreen, if (Kit.dark) .5f else .17f, width, height)
+        leaf.gloss = if (Kit.dark) .30f else .22f
+        leaf.drawShadow(c, toScreen, if (Kit.dark) .55f else .2f, width, height)
         leaf.draw(c)
+        // The sheet's edge: lit at night, a hair darker by day, so it reads as paper over paper
+        leaf.drawEdge(c, if (Kit.dark) withAlpha(0xF3ECDD, .28f) else withAlpha(0x000000, .10f), .9f * dp)
     }
 
     /** Carries the hand to (u, v) in the leaf's frame, the corner rising by [arc] on the way. */
@@ -667,19 +803,42 @@ class ReaderView(c: Context) : View(c) {
     private fun settleNow() {
         leafAnim?.run { removeAllListeners(); cancel() }
         leafAnim = null; leafA = -1; fromJacket = false
+        spring.stop(); leaf.speed = 0f
     }
 
-    // ---- Opening the jacket
+    // ---- The jacket
 
-    private fun jacket(): Bitmap = jacketBmp?.takeIf { it.width == width && it.height == height }
-        ?: Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), Bitmap.Config.ARGB_8888).also { b ->
-            article?.let { Jacket.draw(Canvas(b), width, height, it, context) }
-            jacketBmp = b
+    private fun style(): Int = article?.let { if (it.cover >= 0) it.cover else Jacket.auto(it) } ?: 0
+
+    /** Where the jacket sits: the whole cover screen upright; turned, a book standing in the middle. */
+    private fun jacketRect(): RectF = if (width <= height) RectF(0f, 0f, width.toFloat(), height.toFloat())
+        else (height * .66f).let { bw -> RectF((width - bw) / 2, 0f, (width + bw) / 2, height.toFloat()) }
+
+    private fun jacket(style: Int): Bitmap {
+        val r = jacketRect(); val w = r.width().toInt().coerceAtLeast(1); val h = r.height().toInt().coerceAtLeast(1)
+        return jackets[style]?.takeIf { it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { b ->
+                article?.let { Jacket.draw(Canvas(b), w, h, it, context, style) }
+                jackets[style] = b
+            }
+    }
+
+    private fun drawJacket(c: Canvas, style: Int) {
+        val r = jacketRect()
+        if (r.width() < width) {
+            // Turned: the book stands on the dark, a soft shadow under it
+            shade.shader = null; shade.color = withAlpha(0x000000, .45f)
+            c.drawRect(r.left + 6 * dp, r.top + 8 * dp, r.right + 6 * dp, r.bottom, shade)
         }
+        c.drawBitmap(jacket(style), r.left, r.top, null)
+    }
 
-    /** The jacket as the leaf: printed on the front, the endpaper inside. */
-    private fun beginJacket() {
-        fromJacket = true; sigma = 1; leafA = spread
+    /**
+     * The cover as the leaf: the jacket printed on its front, the endpaper inside, and beneath it
+     * the next design ([to]), as if leafing through a stack of covers.
+     */
+    private fun beginJacket(to: Int) {
+        fromJacket = true; sigma = 1; leafA = spread; jacketTo = to
         leaf.size(width.toFloat(), height.toFloat())
         val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
         val inside = versoBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -692,17 +851,54 @@ class ReaderView(c: Context) : View(c) {
             var k = -h.toFloat()
             while (k < w + h) { drawLine(k, 0f, k + h, h.toFloat(), l); drawLine(k + h, 0f, k, h.toFloat(), l); k += step }
         }
-        leaf.front = jacket(); leaf.back = inside
+        val front = versoFront?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        versoFront = front
+        Canvas(front).apply { drawColor(Kit.GROUND); drawJacket(this, style()) }
+        leaf.front = front; leaf.back = inside
         leaf.shaders()
     }
+    private var versoFront: Bitmap? = null
 
-    /** A tap on the jacket opens the book. */
-    private fun openJacket() {
+    /** The next (or previous) design, turned to by a tap of a key or a swipe that ends as a flick. */
+    private fun changeCover(dir: Int) {
+        val to = Math.floorMod(style() + dir, Jacket.names.size)
         settleNow()
-        beginJacket()
+        if (width > height) { setCover(to); return }      // turned: the book stands small; it simply changes
+        beginJacket(to)
         leaf.take(leaf.len, leaf.breadth * .8f)
         paper?.cover()
-        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .07f, ms = 820L, landed = true) { closed = false; fromJacket = false; record() }
+        sweep(-leaf.grabU, leaf.grabV, arc = leaf.breadth * .07f, ms = 760L, landed = true) { setCover(to); fromJacket = false }
+    }
+
+    /**
+     * A tap on the shut book: its cover lifts a little at the corner, showing the next design
+     * beneath, and settles back, while the activity says to unfold to read.
+     */
+    private fun peek() {
+        if (leafA >= 0 || width > height) return
+        settleNow()
+        beginJacket(Math.floorMod(style() + 1, Jacket.names.size))
+        leaf.take(leaf.len, leaf.breadth * .82f)
+        val u0 = leaf.grabU; val v0 = leaf.grabV
+        paper?.fold()
+        leafAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 900
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                val t = it.animatedValue as Float
+                // Up quickly, a breath at the top, down softly
+                val k = if (t < .35f) Kit.ease.getInterpolation(t / .35f) else 1f - Kit.ease.getInterpolation(((t - .45f) / .55f).coerceIn(0f, 1f))
+                leaf.hold(u0 - leaf.len * .36f * k, v0 - leaf.breadth * .04f * k)
+                invalidate()
+            }
+            addListener(object : AnimatorListenerAdapter() { override fun onAnimationEnd(an: Animator) { leafA = -1; fromJacket = false; invalidate() } })
+            start()
+        }
+    }
+
+    private fun setCover(to: Int) {
+        article?.cover = to
+        onCover?.invoke(); record(); invalidate()
     }
 
     // ---- The hand on the leaf
@@ -715,15 +911,29 @@ class ReaderView(c: Context) : View(c) {
     private var velocity: VelocityTracker? = null
 
     private fun along(e: MotionEvent) = if (across) e.x else e.y
+    private fun along(e: MotionEvent, h: Int) = if (across) e.getHistoricalX(h) else e.getHistoricalY(h)
+
+    private val trail = FloatArray(8); private val trailT = LongArray(8); private var trailN = 0
+    private fun note(pos: Float, t: Long) { val i = trailN % 8; trail[i] = pos; trailT[i] = t; trailN++ }
+    /** px a second along the turning axis over the last ~80 ms of the finger's path. */
+    private fun trailSpeed(): Float {
+        if (trailN < 2) return 0f
+        val last = (trailN - 1) % 8; val tEnd = trailT[last]
+        var k = trailN - 2; var first = last
+        while (k >= 0 && k > trailN - 8 && tEnd - trailT[k % 8] <= 80) { first = k % 8; k-- }
+        val dt = (tEnd - trailT[first]) / 1000f
+        return if (dt <= 0f) 0f else (trail[last] - trail[first]) / dt
+    }
     private fun acrossOf(e: MotionEvent) = if (across) e.y else e.x
 
     private fun startDrag(e: MotionEvent, dir: Int): Boolean {
         if (closed) {
-            if (dir < 0) return false
-            settleNow(); beginJacket()
+            if (width > height) { changeCover(dir); return false }
+            settleNow(); beginJacket(Math.floorMod(style() + dir, Jacket.names.size))
             leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
             dragging = true
             parent?.requestDisallowInterceptTouchEvent(true)
+            spring.start(leaf.handU, leaf.handV)
             follow(e)
             return true
         }
@@ -742,6 +952,7 @@ class ReaderView(c: Context) : View(c) {
         }
         dragging = true
         parent?.requestDisallowInterceptTouchEvent(true)
+        spring.start(if (pulling) -leaf.grabU else leaf.handU, leaf.handV)
         follow(e)
         return true
     }
@@ -749,28 +960,85 @@ class ReaderView(c: Context) : View(c) {
     private fun follow(e: MotionEvent) {
         // Drawing a page back in, the fold sits as far in from the edge as the finger has travelled
         val u = if (pulling) -leaf.grabU + 2 * max(0f, frameU(e.x, e.y) - frameU(downX, downY)) else frameU(e.x, e.y)
-        leaf.hold(u, frameV(e.x, e.y))
-        invalidate()
+        spring.aim(u, frameV(e.x, e.y), Rate.HAND)
     }
+
+    /**
+     * The paper's weight. The hand pulls the sheet through a stiff spring, so it trails the finger by
+     * a hair and never jumps; let go and a softer one carries it on with the finger's own speed and
+     * lays it down, settling rather than stopping dead. Its speed bows the curl (a quick turn
+     * catches air). Runs on the display's frames.
+     */
+    private object Rate { const val HAND = 34f; const val FALL = 12.5f }
+    private inner class Spring : android.view.Choreographer.FrameCallback {
+        var u = 0f; var v = 0f; var vu = 0f; var vv = 0f
+        var tu = 0f; var tv = 0f
+        var omega = Rate.HAND; var zeta = 1f
+        var running = false
+        var last = 0L
+        var arrive: (() -> Unit)? = null
+        var started = 0L
+
+        fun start(fromU: Float, fromV: Float) { u = fromU; v = fromV; vu = 0f; vv = 0f; tu = fromU; tv = fromV; arrive = null }
+
+        fun aim(toU: Float, toV: Float, w: Float, z: Float = 1f, then: (() -> Unit)? = null) {
+            tu = toU; tv = toV; omega = w; zeta = z; arrive = then
+            if (!running) { running = true; last = 0L; started = System.nanoTime(); android.view.Choreographer.getInstance().postFrameCallback(this) }
+        }
+
+        fun stop() { running = false; android.view.Choreographer.getInstance().removeFrameCallback(this) }
+
+        override fun doFrame(now: Long) {
+            if (!running) return
+            val dt = if (last == 0L) 1f / 120f else ((now - last) / 1e9f).coerceIn(1f / 240f, 1f / 30f)
+            last = now
+            // Semi-implicit Euler, in two half steps for stiffness
+            repeat(2) {
+                val h = dt / 2
+                val k = omega * omega; val c = 2f * zeta * omega
+                vu += (k * (tu - u) - c * vu) * h; u += vu * h
+                vv += (k * (tv - v) - c * vv) * h; v += vv * h
+            }
+            leaf.speed = kotlin.math.hypot(vu, vv)
+            leaf.hold(u, v)
+            invalidate()
+            val settled = arrive != null && kotlin.math.abs(tu - u) < .6f && kotlin.math.abs(tv - v) < .6f && leaf.speed < 30f
+            val tooLong = arrive != null && System.nanoTime() - started > 1_600_000_000L
+            if (settled || tooLong) {
+                running = false
+                leaf.speed = 0f; leaf.hold(tu, tv)
+                val a = arrive; arrive = null
+                a?.invoke()
+                return
+            }
+            android.view.Choreographer.getInstance().postFrameCallback(this)
+        }
+
+    }
+    private val spring = Spring()
 
     private fun release() {
         dragging = false
         val vt = velocity
         vt?.computeCurrentVelocity(1000)
-        val v = sigma * (vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f)
+        val tracked = vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f
+        val v = sigma * (if (kotlin.math.abs(tracked) > 1f) tracked else trailSpeed())
         val fast = 380f * dp
         // Carried towards the spine and past it, or flicked that way, it goes over; else it settles back
         // On one page the spine is the screen's edge, out of reach: past the middle is far enough
         // Drawing a page back in, a quarter of the way is enough to bring it back
         val halfway = when { mode != Mode.SINGLE -> .5f; pulling -> .75f; else -> .3f }
         pulling = false
-        val over = when { v < -fast -> true; v > fast -> false; else -> leaf.progress > halfway }
+        // Judge by where the finger let go, not where the sheet has reached: it trails the hand by
+        // a little, and a quick flick lets go before it catches up
+        val reached = ((leaf.grabU - spring.tu) / (2 * leaf.grabU)).coerceIn(0f, 1f)
+        val over = when { v < -fast -> true; v > fast -> false; else -> max(reached, leaf.progress) > halfway }
         if (fromJacket) {
             if (over) paper?.cover()
-            val rest = if (over) 1f - leaf.progress else leaf.progress
-            sweep(if (over) -leaf.grabU else leaf.grabU, leaf.grabV, 0f, (220 + 420 * rest).toLong(), landed = over) {
-                if (over) closed = false
-                fromJacket = false; record()
+            val to = jacketTo
+            fall(over, v, landed = over) {
+                if (over) setCover(to)
+                fromJacket = false
             }
             return
         }
@@ -778,8 +1046,23 @@ class ReaderView(c: Context) : View(c) {
         val now = if (over == (sigma > 0)) a + 1 else a
         val changed = now != spread
         if (changed) { val quick = concentrato(); spread = now; moved(); paper?.turn(quick) }
-        val remaining = if (over) 1f - leaf.progress else leaf.progress
-        sweep(if (over) -leaf.grabU else leaf.grabU, leaf.grabV, arc = 0f, ms = (180 + 380 * remaining).toLong(), landed = changed)
+        fall(over, v, landed = changed)
+    }
+
+    /**
+     * Let go: the sheet goes on at the finger's speed ([v], px a second, in the leaf's frame) and a
+     * softer spring lays it down, over or back, settling with a breath of give rather than stopping.
+     */
+    private fun fall(over: Boolean, v: Float, landed: Boolean, done: (() -> Unit)? = null) {
+        val vel = velocity?.let { if (across) it.yVelocity else it.xVelocity } ?: 0f
+        spring.vu = v.coerceIn(-9000f * dp / 2.75f, 9000f * dp / 2.75f)
+        spring.vv = vel * .2f
+        spring.aim(if (over) -leaf.grabU else leaf.grabU, leaf.grabV, Rate.FALL, .82f) {
+            leafA = -1
+            done?.invoke()
+            invalidate()
+            if (landed) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
     }
 
     private fun fadeChrome(to: Float, ms: Long) {
@@ -796,9 +1079,9 @@ class ReaderView(c: Context) : View(c) {
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             val w = width.toFloat(); val h = height.toFloat()
             if (tapOnEar(e.x, e.y)) return true
+            if (closed) { onShutTap?.invoke(); peek(); return true }
             when {
                 e.y < h * .1f -> onTopEdge?.invoke()
-                closed -> openJacket()
                 mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
                 mode == Mode.STACK && abs(e.y - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
                 e.x < w * .3f -> turn(-1)
@@ -816,12 +1099,15 @@ class ReaderView(c: Context) : View(c) {
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = e.x; downY = e.y; dragging = false; folding = false
+                downX = e.x; downY = e.y; dragging = false; folding = false; trailN = 0
                 cornerSide = cornerAt(e.x, e.y)
                 velocity?.recycle(); velocity = VelocityTracker.obtain()
             }
         }
         velocity?.addMovement(e)
+        // Our own short record of where the finger was, for the flick's speed when the tracker has none
+        for (h in 0 until e.historySize) note(along(e, h), e.getHistoricalEventTime(h))
+        note(if (across) e.x else e.y, e.eventTime)
         // A finger on a page's top outer corner, moving in and down, folds the corner
         if (cornerSide >= 0 && !dragging) {
             val k = corner(cornerSide)
@@ -851,7 +1137,8 @@ class ReaderView(c: Context) : View(c) {
         if (dragging) {
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> follow(e)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> release()
+                MotionEvent.ACTION_UP -> { follow(e); release() }
+                MotionEvent.ACTION_CANCEL -> release()
             }
             return true
         }
@@ -879,6 +1166,7 @@ class ReaderView(c: Context) : View(c) {
         val o = JSONObject()
             .put("mode", mode.name)
             .put("closed", closed)
+            .put("cover", style())
             .put("marks", article?.marks?.size ?: 0)
             .put("view", JSONArray(listOf(width, height)))
             .put("pages", starts.size)

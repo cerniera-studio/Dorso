@@ -12,6 +12,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.window.java.layout.WindowInfoTrackerCallbackAdapter
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
@@ -25,6 +26,7 @@ import com.cerniera.kit.Row
 import com.cerniera.kit.Sheet
 import com.cerniera.kit.rounded
 import com.cerniera.kit.text
+import com.cerniera.kit.withAlpha
 
 /**
  * The reader: the spread full screen, the bars out of the way (a swipe from the edge brings them
@@ -61,6 +63,8 @@ class ReaderActivity : Activity() {
             onSpine = { finish() }
             onMiddle = { showTrim(trim.visibility != View.VISIBLE) }
             onMarks = { article?.let { Store.put(this@ReaderActivity, it) } }
+            onCover = { article?.let { Store.put(this@ReaderActivity, it) } }
+            onShutTap = { hint() }
         }
         trim = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -83,6 +87,13 @@ class ReaderActivity : Activity() {
         val root = FrameLayout(this)
         root.addView(reader, FrameLayout.LayoutParams(-1, -1))
         root.addView(trim, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = px(14) })
+        shutHint = text("UNFOLD TO READ  ·  SWIPE FOR ANOTHER COVER", 10.5f, Kit.Fixed.IVORY, 500).apply {
+            letterSpacing = .2f; gravity = Gravity.CENTER
+            setPadding(px(16), px(9), px(16), px(9))
+            background = rounded(withAlpha(0x000000, .55f), px(18).toFloat())
+            alpha = 0f
+        }
+        root.addView(shutHint, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = px(28) })
         root.setOnApplyWindowInsetsListener { _, insets ->
             val cut = insets.displayCutout?.boundingRects.orEmpty()
             reader.setCutouts(cut.map { Rect(it) })
@@ -99,6 +110,16 @@ class ReaderActivity : Activity() {
     }
 
     private lateinit var paper: Paper
+    private lateinit var shutHint: TextView
+
+    /** On the shut book: unfold to read, swipe for another cover. Rises, waits, sinks. */
+    private fun hint() {
+        shutHint.animate().cancel()
+        shutHint.translationY = px(10).toFloat()
+        shutHint.animate().alpha(1f).translationY(0f).setDuration(Kit.SETTLE).setInterpolator(Kit.ease).withEndAction {
+            shutHint.animate().alpha(0f).setStartDelay(2400).setDuration(Kit.GLIDE).start()
+        }.start()
+    }
 
     override fun onDestroy() {
         if (::paper.isInitialized) paper.release()

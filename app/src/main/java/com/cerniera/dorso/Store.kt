@@ -20,6 +20,8 @@ data class Article(
     val blocks: List<Block>, val savedAt: Long, var offset: Int = 0, var progress: Float = 0f, var openedAt: Long = 0L,
     /** Dog-eared pages: where each starts, and the size of its fold. */
     val marks: MutableList<Mark> = mutableListOf(),
+    /** The jacket design chosen on the cover screen; -1 until you choose (then the read's own). */
+    var cover: Int = -1,
 ) {
     val words get() = blocks.sumOf { b -> b.text.split(' ').count { it.isNotBlank() } }
     val minutes get() = (words / 230).coerceAtLeast(1)
@@ -50,6 +52,7 @@ object Store {
     private fun write(a: Article) = JSONObject().apply {
         put("id", a.id); put("url", a.url); put("title", a.title); put("byline", a.byline); put("site", a.site)
         put("savedAt", a.savedAt); put("offset", a.offset); put("progress", a.progress.toDouble()); put("openedAt", a.openedAt)
+        put("cover", a.cover)
         put("marks", JSONArray().apply { a.marks.forEach { m -> put(JSONArray().put(m.offset).put(m.along.toDouble()).put(m.down.toDouble())) } })
         put("blocks", JSONArray().apply { a.blocks.forEach { b -> put(JSONObject().put("k", b.kind).put("t", b.text)) } })
     }
@@ -61,6 +64,6 @@ object Store {
         return Article(o.getString("id"), o.getString("url"), o.getString("title"), o.optString("byline"), o.optString("site"),
             blocks, o.getLong("savedAt"), o.optInt("offset"), o.optDouble("progress", 0.0).toFloat(), o.optLong("openedAt"),
             o.optJSONArray("marks")?.let { m -> (0 until m.length()).map { i -> m.getJSONArray(i).let { Mark(it.getInt(0), it.getDouble(1).toFloat(), it.getDouble(2).toFloat()) } }.toMutableList() }
-                ?: mutableListOf())
+                ?: mutableListOf(), o.optInt("cover", -1))
     }
 }

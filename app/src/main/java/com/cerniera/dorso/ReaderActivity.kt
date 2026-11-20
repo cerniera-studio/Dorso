@@ -27,7 +27,7 @@ import com.cerniera.kit.text
  * The reader: the spread full screen, the bars out of the way (a swipe from the edge brings them
  * back), the crease read from Jetpack WindowManager and the camera hole from the display cut-out.
  *
- * Giulietta's trim: touch the top edge and a slim bar rises with smaller, larger and the shelf,
+ * Giulietta's trim: touch the top edge and a slim bar rises with smaller, larger, sound and the shelf,
  * then sinks after 3.2 s untouched.
  */
 class ReaderActivity : Activity() {
@@ -49,8 +49,10 @@ class ReaderActivity : Activity() {
         article = a
         a.openedAt = System.currentTimeMillis(); Store.put(this, a)
 
+        paper = Paper(this).apply { on = prefs().getBoolean("sound", true) }
         reader = ReaderView(this).apply {
             typeStep = prefs().getInt("type", 2)
+            paper = this@ReaderActivity.paper
             onMoved = { off, p -> article?.let { it.offset = off; it.progress = p; Store.put(this@ReaderActivity, it) } }
             onTopEdge = { showTrim(true) }
             onSpine = { finish() }
@@ -65,6 +67,12 @@ class ReaderActivity : Activity() {
             elevation = px(6).toFloat()
             addView(button("A−") { size(-1) })
             addView(button("A+") { size(1) })
+            addView(button(if (paper.on) "Sound" else "Silent") { tapped ->
+                paper.on = !paper.on
+                prefs().edit().putBoolean("sound", paper.on).apply()
+                (tapped as android.widget.TextView).text = if (paper.on) "Sound" else "Silent"
+                if (paper.on) paper.turn(false)
+            })
             addView(button("Shelf") { finish() })
         }
         val root = FrameLayout(this)
@@ -85,12 +93,19 @@ class ReaderActivity : Activity() {
         reader.show(a)
     }
 
+    private lateinit var paper: Paper
+
+    override fun onDestroy() {
+        if (::paper.isInitialized) paper.release()
+        super.onDestroy()
+    }
+
     private fun prefs() = getSharedPreferences("dorso", Context.MODE_PRIVATE)
 
-    private fun button(label: String, onTap: () -> Unit) = text(label, 15f, Kit.INK, 500).apply {
+    private fun button(label: String, onTap: (View) -> Unit) = text(label, 15f, Kit.INK, 500).apply {
         setPadding(px(18), px(10), px(18), px(10))
         pressable()
-        setOnClickListener { onTap(); poke() }
+        setOnClickListener { onTap(it); poke() }
     }
 
     private fun size(d: Int) {

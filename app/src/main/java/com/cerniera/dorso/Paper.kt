@@ -42,5 +42,11 @@ class Paper(context: Context) {
         pool.play(takes[Random.nextInt(takes.size)], .7f, .7f, 1, 0, .76f + Random.nextFloat() * .06f)
     }
 
+    /** A corner folded or smoothed out: a short, high crinkle. */
+    fun fold() {
+        if (!on || audio?.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+        pool.play(takes[Random.nextInt(takes.size)], .3f, .3f, 1, 0, 1.55f + Random.nextFloat() * .15f)
+    }
+
     fun release() = pool.release()
 }

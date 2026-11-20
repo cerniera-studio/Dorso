@@ -47,6 +47,15 @@ internal class Leaf {
     private val pos = FloatArray(n * 2)      // on screen
     private val tex = FloatArray(n * 2)
     private val light = IntArray(n)
+    private val sheen = IntArray(n)          // the highlight along the roll, added over the paper
+    private val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply { blendMode = android.graphics.BlendMode.SCREEN }
+    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND }
+    private val rimPath = android.graphics.Path()
+
+    /** How fast the hand is moving, px a second: a page moved quickly bows more. */
+    var speed = 0f
+    /** How strongly the roll catches the light: more at night, when it is all that shows the sheet. */
+    var gloss = .35f
     private val angle = FloatArray(n)
     private val frontIdx = ShortArray(cols * rows * 6)
     private val backIdx = ShortArray(cols * rows * 6)
@@ -88,7 +97,8 @@ internal class Leaf {
             }
         }
         handU = x; handV = y
-        radius = rMax * sin(PI * progress).toFloat()
+        // Fullest mid-turn; a quick hand bows the paper further, as air catches it
+        radius = rMax * sin(PI * progress).toFloat() * (1f + (speed / (3200f * dpScale)).coerceIn(0f, .55f))
     }
 
     private fun maxRadius() = min(len * .12f, 64f * dpScale)
@@ -132,6 +142,10 @@ internal class Leaf {
             }
             val g = (l * 255).toInt().coerceIn(0, 255)
             light[k] = Color.rgb(g, g, g)
+            // The sheen: where the roll turns its face to the light (a little past upright)
+            val s = if (a <= 0f || a >= PI.toFloat()) 0f else cos(a - 1.15f).coerceAtLeast(0f).let { it * it * it * it * it * it }
+            val sa = (255 * gloss * s * sin(PI * progress).toFloat()).toInt().coerceIn(0, 255)
+            sheen[k] = Color.argb(sa, 255, 250, 238)
         }
         frontCount = 0; backCount = 0
         for (j in 0 until rows) for (i in 0 until cols) {
@@ -161,6 +175,28 @@ internal class Leaf {
     }
 
     fun draw(c: Canvas) {
+        drawPaper(c)
+        // The sheen over both faces, then the edge of the sheet, lit
+        if (frontCount > 0) c.drawVertices(Canvas.VertexMode.TRIANGLES, pos.size, pos, 0, null, 0, sheen, 0, frontIdx, 0, frontCount, sp)
+        if (backCount > 0) c.drawVertices(Canvas.VertexMode.TRIANGLES, pos.size, pos, 0, null, 0, sheen, 0, backIdx, 0, backCount, sp)
+    }
+
+    /**
+     * The sheet's free edges (head, fore-edge and tail, not the spine), drawn as a fine line: light
+     * at night, a little darker by day, so the sheet reads as a sheet against the page beneath.
+     */
+    fun drawEdge(c: Canvas, colour: Int, width: Float) {
+        if (progress < .005f) return
+        rimPath.reset()
+        rimPath.moveTo(pos[0], pos[1])
+        for (i in 1..cols) rimPath.lineTo(pos[i * 2], pos[i * 2 + 1])
+        for (j in 1..rows) { val k = j * (cols + 1) + cols; rimPath.lineTo(pos[k * 2], pos[k * 2 + 1]) }
+        for (i in cols - 1 downTo 0) { val k = rows * (cols + 1) + i; rimPath.lineTo(pos[k * 2], pos[k * 2 + 1]) }
+        rim.color = colour; rim.strokeWidth = width
+        c.drawPath(rimPath, rim)
+    }
+
+    private fun drawPaper(c: Canvas) {
         if (frontCount > 0) c.drawVertices(Canvas.VertexMode.TRIANGLES, pos.size, pos, 0, tex, 0, light, 0, frontIdx, 0, frontCount, fp)
         if (backCount > 0) c.drawVertices(Canvas.VertexMode.TRIANGLES, pos.size, pos, 0, tex, 0, light, 0, backIdx, 0, backCount, bp)
     }

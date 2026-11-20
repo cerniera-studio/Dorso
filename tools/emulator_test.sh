@@ -24,19 +24,20 @@ adb exec-out screencap -p > shot-0-shelf.png
 adb shell am start -W -n $PKG/.MainActivity --es open sample --es at 2200 >/dev/null; sleep 5
 prev=$(layout); echo "opened: $prev"
 
-check() {  # name expected-mode
+check() {  # name expected-mode expected-closed
   sleep 2
   now=$(layout)
   adb exec-out screencap -p > "shot-$1.png"
-  python3 - "$1" "$2" "$prev" "$now" <<'PY' || fail=1
+  python3 - "$1" "$2" "$prev" "$now" "$3" <<'PY' || fail=1
 import json, sys
-name, want, a, b = sys.argv[1:5]
+name, want, a, b, shut = sys.argv[1:6]
 try:
     old, new = json.loads(a), json.loads(b)
 except Exception as e:
     print(f"::error::{name}: no layout ({e})"); sys.exit(1)
 bad = []
 if new["mode"] != want: bad.append(f"mode {new['mode']}, expected {want}")
+if str(new.get("closed")) != shut: bad.append(f"closed {new.get('closed')}, expected {shut} (the cover screen shows the cover; the open phone reads)")
 cpl = new["charsPerLine"]
 if not 30 <= cpl <= 80: bad.append(f"{cpl} characters a line")
 if new["textOverSpine"]: bad.append("text over the spine")
@@ -54,22 +55,48 @@ PY
   if crashed; then echo "::error::crash in $1"; fail=1; fi
   prev=$now
 }
-check cover-upright SINGLE
-size 1503 1568; check main-upright SIDE
-size 1568 1503; check main-turned SIDE
-size 1680 719;  check cover-turned SIDE
-size 719 1680;  check cover-again SINGLE
+check cover-upright SINGLE True
+size 1503 1568; check main-upright SIDE False
+size 1568 1503; check main-turned SIDE False
+size 1680 719;  check cover-turned SIDE True
+size 719 1680;  check cover-again SINGLE True
+offset() { layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])"; }
+field() { layout | python3 -c "import json,sys; print(json.load(sys.stdin).get('$1'))"; }
 
-# Turning: a tap on the right turns the page forward; the top edge brings the trim
-before=$(layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])")
-adb shell input tap 650 900; sleep 1.5
-after=$(layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])")
+# The cover screen is the cover: swipe through the six designs, each photographed. A held swipe is
+# photographed as the cover turns over onto the next; a tap brings the hint to unfold. The place
+# must not move: the book is shut.
+b=$(offset)
+for k in 1 2 3 4 5 6; do
+  s0=$(field cover)
+  adb exec-out screencap -p > "shot-cover-$s0.png"
+  if [ $k = 2 ]; then
+    adb shell input motionevent DOWN 680 1250
+    for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 680 - 60 * i )) $(( 1250 - 45 * i )); done
+    sleep 0.4; adb exec-out screencap -p > shot-cover-turning.png
+    adb shell input motionevent MOVE 40 950; adb shell input motionevent UP 40 950
+  else
+    adb shell input swipe 680 1100 60 1000 160
+  fi
+  sleep 1.6
+  s1=$(field cover)
+  if [ "$s1" != "$s0" ]; then echo "::notice::cover: design $s0 -> $s1"; else echo "::error::swipe did not change the cover ($s0)"; fail=1; fi
+done
+adb shell input tap 360 900; sleep 0.5; adb exec-out screencap -p > shot-shut-hint.png
+if [ "$(field closed)" = "True" ] && [ "$(offset)" = "$b" ]; then echo "::notice::the cover screen stays shut; place kept"; else echo "::error::the cover screen opened or the place moved (closed=$(field closed), $b -> $(offset))"; fail=1; fi
+size 1680 719; sleep 2; adb exec-out screencap -p > shot-cover-turned.png
+if crashed; then echo "::error::crash on the cover"; fail=1; fi
+
+# Unfolded: reading. A tap on the right turns the page forward.
+size 1503 1568; sleep 2
+before=$(offset)
+adb shell input tap 1400 800; sleep 1.5
+after=$(offset)
 if [ "$after" -gt "$before" ]; then echo "::notice::turned: $before -> $after"; else echo "::error::page did not turn ($before -> $after)"; fail=1; fi
 adb exec-out screencap -p > shot-turned.png
 
 # The leaf: take the page by its edge, hold it part way over (photographed), then let it go.
 # Past halfway it must fall over (forward: the place moves on; back: it moves back).
-offset() { layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])"; }
 drag() {  # name y x-from x-hold x-to want(+/-)
   b=$(offset)
   adb shell input motionevent DOWN $3 $2
@@ -77,51 +104,31 @@ drag() {  # name y x-from x-hold x-to want(+/-)
   sleep 0.4; adb exec-out screencap -p > "shot-leaf-$1.png"
   adb shell input motionevent MOVE $5 $2
   adb shell input motionevent UP $5 $2
-  sleep 1.5
+  sleep 2
   a=$(offset)
   if { [ "$6" = "+" ] && [ "$a" -gt "$b" ]; } || { [ "$6" = "-" ] && [ "$a" -lt "$b" ]; }; then echo "::notice::leaf $1: $b -> $a"
   else echo "::error::leaf $1 did not turn ($b -> $a, wanted $6)"; fail=1; fi
   if crashed; then echo "::error::crash turning $1"; fail=1; fi
 }
-drag cover-forward 900 690 380 90 +
-drag cover-back 900 20 300 650 -
-size 1503 1568; sleep 2
 drag main-back 800 60 620 1400 -
 drag main-forward 800 1450 900 120 +
-size 719 1680; sleep 2
+# At night too: the sheet must read as paper over the page
+adb shell cmd uimode night yes; sleep 3
+drag main-night 800 60 620 1400 -
+adb shell cmd uimode night no; sleep 3
 
-# Folding shut: the book closes and the jacket shows. Take its edge and open it (held part way,
-# photographed): past halfway it opens onto the page you were on, which must not have moved.
-closedq() { layout | python3 -c "import json,sys; print(json.load(sys.stdin).get('closed'))"; }
-adb exec-out screencap -p > shot-jacket.png
-if [ "$(closedq)" = "True" ]; then echo "::notice::folded shut: the jacket shows"; else echo "::error::folding shut did not close the book"; fail=1; fi
-b=$(offset)
-adb shell input motionevent DOWN 690 1300
-for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 690 - 70 * i )) $(( 1300 - 50 * i )); done
-sleep 0.4; adb exec-out screencap -p > shot-jacket-opening.png
-adb shell input motionevent MOVE 40 1000
-adb shell input motionevent UP 40 1000
-sleep 1.6
-adb exec-out screencap -p > shot-jacket-open.png
-if [ "$(closedq)" = "False" ] && [ "$(offset)" = "$b" ]; then echo "::notice::jacket opened onto the same page"; else echo "::error::jacket did not open cleanly (closed=$(closedq), offset $b -> $(offset))"; fail=1; fi
-if crashed; then echo "::error::crash opening the jacket"; fail=1; fi
-
-# Dog-ear: fold the page's top corner down (photographed mid-fold), let go: the page is marked.
-# Unfolded it's still there on its page; a tap on the fold smooths it out.
-marksq() { layout | python3 -c "import json,sys; print(json.load(sys.stdin).get('marks'))"; }
-adb shell input motionevent DOWN 712 14
-for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 712 - 24 * i )) $(( 14 + 26 * i )); done
+# Dog-ear: fold the right page's top corner down (photographed mid-fold): the page is marked;
+# a tap on the fold smooths it out.
+adb shell input motionevent DOWN 1495 14
+for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( 1495 - 26 * i )) $(( 14 + 28 * i )); done
 sleep 0.3; adb exec-out screencap -p > shot-dogear-folding.png
-adb shell input motionevent UP 568 170
+adb shell input motionevent UP 1339 182
 sleep 1; adb exec-out screencap -p > shot-dogear.png
-if [ "$(marksq)" = "1" ]; then echo "::notice::dog-ear: page marked"; else echo "::error::dog-ear did not mark the page (marks=$(marksq))"; fail=1; fi
-size 1503 1568; sleep 2; adb exec-out screencap -p > shot-dogear-main.png
-size 719 1680; sleep 2
-adb shell input tap 360 900; sleep 1.5        # the book shut on folding: open the jacket
-adb shell input tap 704 22; sleep 1
-if [ "$(marksq)" = "0" ]; then echo "::notice::dog-ear: a tap smoothed it out"; else echo "::error::tap on the fold did not unmark (marks=$(marksq))"; fail=1; fi
+if [ "$(field marks)" = "1" ]; then echo "::notice::dog-ear: page marked"; else echo "::error::dog-ear did not mark the page (marks=$(field marks))"; fail=1; fi
+adb shell input tap 1488 24; sleep 1
+if [ "$(field marks)" = "0" ]; then echo "::notice::dog-ear: a tap smoothed it out"; else echo "::error::tap on the fold did not unmark (marks=$(field marks))"; fail=1; fi
 if crashed; then echo "::error::crash with the dog-ear"; fail=1; fi
-adb shell input tap 360 60; sleep 1
+adb shell input tap 700 60; sleep 1
 adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2
 adb exec-out screencap -p > shot-shelf-after.png

@@ -52,7 +52,9 @@ import kotlin.math.sqrt
  *    shade, as Fold Widgets' music widget does at its small sizes.
  *
  * Like Fold Widgets' widgets it learns where it sits from a tap (the tap that opens the book), and
- * until then reads the wallpaper's overall colour.
+ * (21 Nov 2026) from Fold Widgets' live mode, which sees it on the home screen like its own and
+ * passes on its place and the wallpaper's, at content://…look/seats/com.cerniera.dorso; until then
+ * it reads the wallpaper's overall colour.
  */
 class Nightstand : AppWidgetProvider() {
 
@@ -76,6 +78,7 @@ class Nightstand : AppWidgetProvider() {
             Thread {
                 runCatching {
                     Backdrop.invalidate()
+                    take(app, m, ids)
                     val a = current(app)
                     val look = look(app)
                     for (id in ids) draw(app, m, id, a, look)
@@ -112,6 +115,56 @@ class Nightstand : AppWidgetProvider() {
             return look
         }
 
+        /** The launcher's placing and tint of the wallpaper behind widget [id], when live mode saw them. */
+        private fun live(c: Context, id: Int): Backdrop.LiveView? = runCatching {
+            val v = store(c).getString("live_$id", null)!!.split(",")
+            Backdrop.LiveView(v[0].toFloat(), v[1].toFloat(), floatArrayOf(v[2].toFloat(), v[3].toFloat(), v[4].toFloat()), v[5].toInt(), v[6].toInt())
+        }.getOrNull()
+
+        /**
+         * Takes up where Fold Widgets' live mode last saw Dorso's widgets, if that is new: each seen
+         * place goes to the Dorso widget nearest its last known place, else closest in size.
+         */
+        private fun take(c: Context, m: AppWidgetManager, ids: IntArray) {
+            class Seen(val l: Float, val t: Float, val w: Float, val h: Float, val sw: Int, val sh: Int, val live: Backdrop.LiveView?)
+            val seen = ArrayList<Seen>(); var at = 0L
+            runCatching {
+                c.contentResolver.query(Uri.parse("content://$AUTHORITY/seats/${c.packageName}"), null, null, null, null)?.use { cur ->
+                    fun f(n: String) = cur.getFloat(cur.getColumnIndexOrThrow(n))
+                    fun i(n: String) = cur.getInt(cur.getColumnIndexOrThrow(n))
+                    while (cur.moveToNext()) {
+                        // An older Fold Widgets has no package column and passes on Nodo's places only
+                        val pk = cur.getColumnIndex("package")
+                        if (pk < 0 || cur.getString(pk) != c.packageName) continue
+                        val sw = i("screen_w"); val sh = i("screen_h")
+                        val live = if (i("live") == 1) Backdrop.LiveView(f("ox"), f("oy"), floatArrayOf(f("gain_r"), f("gain_g"), f("gain_b")), sw, sh) else null
+                        seen += Seen(f("left"), f("top"), f("width"), f("height"), sw, sh, live)
+                        at = cur.getLong(cur.getColumnIndexOrThrow("at"))
+                    }
+                }
+            }
+            val st = store(c)
+            if (seen.isEmpty() || st.getLong("seatsAt", 0L) == at) return
+            val screen = Backdrop.screenSize(c)
+            val here = seen.filter { it.sw == screen.x && it.sh == screen.y }
+            if (here.isEmpty()) return
+            val d = Backdrop.density(c)
+            val claimed = HashSet<Int>(); val e = st.edit()
+            for (s in here) {
+                fun distance(id: Int): Float {
+                    val old = Backdrop.seat(st, id)
+                    if (old != null && old.screenW == s.sw && old.screenH == s.sh)
+                        return Math.abs(old.left - s.l) + Math.abs(old.top - s.t) + 3f * (Math.abs(old.width - s.w) + Math.abs(old.height - s.h))
+                    return 400f + 3f * (sizes(m, id).minOfOrNull { Math.abs(it.width * d - s.w) + Math.abs(it.height * d - s.h) } ?: 400f)
+                }
+                val id = ids.filter { it !in claimed }.minByOrNull { distance(it) } ?: break
+                claimed += id
+                e.putString("seat_$id", Backdrop.Seat(s.l, s.t, s.w, s.h, s.sw, s.sh, true).encode())
+                s.live?.let { v -> val g = v.gain ?: floatArrayOf(1f, 1f, 1f); e.putString("live_$id", listOf(v.ox, v.oy, g[0], g[1], g[2], v.screenW, v.screenH).joinToString(",")) } ?: e.remove("live_$id")
+            }
+            e.putLong("seatsAt", at).apply()
+        }
+
         /** The sizes the launcher shows this widget at (one per orientation), in dp. */
         private fun sizes(m: AppWidgetManager, id: Int): List<SizeF> {
             val o = m.getAppWidgetOptions(id)
@@ -126,7 +179,7 @@ class Nightstand : AppWidgetProvider() {
 
         private fun draw(c: Context, m: AppWidgetManager, id: Int, a: Article?, look: WidgetLook) {
             val d = c.resources.displayMetrics.density
-            val ground = Backdrop.ground(c, store(c), id)
+            val ground = Backdrop.ground(c, store(c), id, live(c, id))
             val map = LinkedHashMap<SizeF, RemoteViews>()
             for ((i, s) in sizes(m, id).withIndex()) {
                 val pic = paint(c, s.width, s.height, d, look, ground, a)

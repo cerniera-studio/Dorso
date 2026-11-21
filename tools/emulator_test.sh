@@ -87,13 +87,14 @@ if [ "$(field closed)" = "True" ] && [ "$(offset)" = "$b" ]; then echo "::notice
 size 1680 719; sleep 2; adb exec-out screencap -p > shot-cover-turned.png
 if crashed; then echo "::error::crash on the cover"; fail=1; fi
 
-# Unfolded: reading. A tap on the right turns the page forward.
+# Unfolded: reading. Pages turn by hand only: a tap at the right edge must not turn the page
+# (tapping to turn is an option, off unless chosen).
 size 1503 1568; sleep 2
 before=$(offset)
 adb shell input tap 1400 800; sleep 1.5
 after=$(offset)
-if [ "$after" -gt "$before" ]; then echo "::notice::turned: $before -> $after"; else echo "::error::page did not turn ($before -> $after)"; fail=1; fi
-adb exec-out screencap -p > shot-turned.png
+if [ "$after" = "$before" ]; then echo "::notice::a tap did not turn the page (turning is by hand)"; else echo "::error::a tap turned the page ($before -> $after)"; fail=1; fi
+sleep 4      # the tap brought the trim; let it sink
 
 # The leaf: take the page by its edge, hold it part way over (photographed), then let it go.
 # Past halfway it must fall over (forward: the place moves on; back: it moves back).

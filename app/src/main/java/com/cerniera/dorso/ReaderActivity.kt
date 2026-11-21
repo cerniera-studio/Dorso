@@ -212,6 +212,7 @@ class ReaderActivity : Activity() {
         super.onPause()
         if (!::reader.isInitialized) return
         article?.let { it.offset = reader.currentOffset(); Store.put(this, it) }
+        Nightstand.refresh(this)
     }
 
     companion object {

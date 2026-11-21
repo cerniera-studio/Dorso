@@ -162,6 +162,16 @@ adb exec-out screencap -p > shot-signin.png
 if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "::notice::sign-in page opened"; else echo "::warning::sign-in page not in front"; fi
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 
+# On the nightstand: the widget's drawing of the book being read, at its usual size and a larger one,
+# saved as drawn (clear ground); and an update broadcast to the provider must not crash
+for sz in 110,190 170,280; do
+  adb shell am start -W -n $PKG/.MainActivity --es nightstand $sz >/dev/null; sleep 4
+  adb exec-out run-as $PKG cat files/nightstand.png > "shot-nightstand-${sz/,/x}.png"
+  if [ -s "shot-nightstand-${sz/,/x}.png" ]; then echo "::notice::nightstand drawn at ${sz} dp"
+  else echo "::error::nightstand not drawn at ${sz}"; fail=1; fi
+done
+adb shell am broadcast -a android.appwidget.action.APPWIDGET_UPDATE -n $PKG/.Nightstand --eia appWidgetIds 1 >/dev/null; sleep 2
+
 if crashed; then echo "::error::Dorso crashed"; fail=1; fi
 { echo "Dorso log"; adb logcat -d -s AndroidRuntime:E; } > app-log.txt
 adb shell wm size reset; adb shell wm density reset

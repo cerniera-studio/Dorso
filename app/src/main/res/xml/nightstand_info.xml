@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A book standing upright: two cells wide, three tall; it can be made larger or smaller. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="100dp"
+    android:minHeight="170dp"
+    android:minResizeWidth="80dp"
+    android:minResizeHeight="130dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="3"
+    android:maxResizeWidth="320dp"
+    android:maxResizeHeight="520dp"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/nightstand"
+    android:description="@string/nightstand_description"
+    android:widgetCategory="home_screen" />

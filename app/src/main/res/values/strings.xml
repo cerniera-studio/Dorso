@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Dorso</string>
+    <string name="nightstand_name">On the nightstand</string>
+    <string name="nightstand_description">The book you\'re reading, its cover and how far in you are. Tap to open it at your page.</string>
 </resources>

@@ -115,12 +115,6 @@ object Jacket {
                 lineTo(rx, len - rw * .8f); lineTo(rx - rw / 2, len); close()
             }
             c.drawPath(path, rib)
-            val note = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = Kit.sans(ctx, 500); color = withAlpha(Kit.CHAMPAGNE and 0xFFFFFF, .95f)
-                textSize = 10f * dp; letterSpacing = .16f; textAlign = Paint.Align.RIGHT
-            }
-            note.textAlign = Paint.Align.CENTER
-            c.drawText("${(p * 100).toInt()}%", rx, len + 13f * dp, note)
         }
 
     }

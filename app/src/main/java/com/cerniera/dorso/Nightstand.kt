@@ -158,6 +158,9 @@ class Nightstand : AppWidgetProvider() {
             if (moved) refresh(c, intArrayOf(id))
         }
 
+        /** The author as a byline would give it, without "By". */
+        private fun byline(a: Article): String? = a.byline.replace(Regex("""^[Bb]y\s+"""), "").trim().takeIf { it.isNotBlank() }
+
         private fun left(a: Article): String {
             val m = (a.minutes * (1f - a.progress)).roundToInt()
             return when {
@@ -232,7 +235,7 @@ class Nightstand : AppWidgetProvider() {
             }
 
             // Too small for a book beside its words: the jacket full bleed, the title over a shade
-            if (min(w, h) < 125f || (w < 150f && h < 220f)) { cover(c, cv, w, h, d, radius, k, a); return bmp }
+            if (min(w, h) < 125f || (w < 150f && h < 220f)) { cover(c, cv, w, h, d, radius, k, a, surface); return bmp }
 
             surface.paint(cv)
             val portrait = h >= 1.3f * w
@@ -273,6 +276,13 @@ class Nightstand : AppWidgetProvider() {
                 val (tp, tl) = title(c, a.title, surface.ink(x + colW / 2, h / 2), colW, maxLines, listOf(19f, 17f, 15.5f, 14.5f).map { it * k })
                 val lineH = tp.textSize * 1.22f
                 tl.forEach { l -> tp.color = surface.ink(x + 10f, y + lineH / 2); cv.drawText(l, x, y + capTop(tp), tp); y += lineH }
+                // The author, under the title, where there's room above the foot
+                val by = byline(a)
+                val foot = h - pad - 12f * k - mp.textSize * 1.6f
+                if (by != null && y + 6f * k + mp.textSize < foot) {
+                    val bp = ink(c, 12.5f * k, surface.muted(x + colW / 2, y + 10f), 500)
+                    cv.drawText(TextUtils.ellipsize(by, bp, colW, TextUtils.TruncateAt.END).toString(), x, y + 6f * k + capTop(bp), bp)
+                }
                 metaLine(cv, meta, mp, x, h - pad - 12f * k - mp.textSize * .3f, colW)
                 progress(cv, surface, x, h - pad - 2f * k, colW, a.progress, k)
             }
@@ -324,31 +334,26 @@ class Nightstand : AppWidgetProvider() {
         }
 
         /**
-         * Small: the jacket fills the widget within its corners; a shade rises from the foot and the
-         * title sits on it in ivory, which the shade keeps far above 7:1 whatever the jacket.
+         * Small: the jacket fills the widget within its corners, untouched (it carries its own title),
+         * and a slim band of the finish at the foot holds the time left and the progress line, in the
+         * finish's proven ink, as a label strip on a book.
          */
-        private fun cover(c: Context, cv: Canvas, w: Float, h: Float, d: Float, radius: Float, k: Float, a: Article) {
+        private fun cover(c: Context, cv: Canvas, w: Float, h: Float, d: Float, radius: Float, k: Float, a: Article, surface: Surface) {
             val shape = Shapes.squircle(RectF(0f, 0f, w, h), radius)
-            cv.save(); cv.clipPath(shape)
-            val pw = (w * d).roundToInt().coerceAtLeast(1); val ph = (h * d).roundToInt().coerceAtLeast(1)
+            val band = (30f * k).coerceAtMost(h * .3f)
+            // The finish everywhere first (so the band is the finish itself), then the jacket above the band
+            surface.paint(cv)
+            cv.save(); cv.clipPath(shape); cv.clipRect(0f, 0f, w, h - band)
+            val pw = (w * d).roundToInt().coerceAtLeast(1); val ph = ((h - band) * d).roundToInt().coerceAtLeast(1)
             val jacket = Bitmap.createBitmap(pw, ph, Bitmap.Config.ARGB_8888)
             Jacket.draw(Canvas(jacket), pw, ph, a, c)
-            cv.drawBitmap(jacket, null, RectF(0f, 0f, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
-            val pad = 10f * k
-            val t = ink(c, 13.5f * k, Kit.Fixed.IVORY, 600)
-            val lines = wrap(a.title, t, w - 2 * pad, 2)
-            val m = ink(c, 11.5f * k, withAlpha(Kit.Fixed.IVORY and 0xFFFFFF, .82f), 500)
-            val block = lines.size * t.textSize * 1.2f + m.textSize * 1.4f + pad * 1.6f
-            cv.drawRect(0f, h - block * 1.7f, w, h, Paint().apply {
-                shader = LinearGradient(0f, h - block * 1.7f, 0f, h, intArrayOf(withAlpha(0x000000, 0f), withAlpha(0x000000, .62f), withAlpha(0x000000, .86f)),
-                    floatArrayOf(0f, .45f, 1f), Shader.TileMode.CLAMP)
-            })
-            var y = h - block + pad * .6f
-            lines.forEach { l -> cv.drawText(l, pad, y + capTop(t), t); y += t.textSize * 1.2f }
-            cv.drawText(TextUtils.ellipsize(left(a), m, w - 2 * pad, TextUtils.TruncateAt.END).toString(), pad, y + 4f * k + capTop(m), m)
+            cv.drawBitmap(jacket, null, RectF(0f, 0f, w, h - band), Paint(Paint.FILTER_BITMAP_FLAG))
             cv.restore()
-            // The finish's edge, so the jacket reads as one of the set
-            cv.drawPath(shape, Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.1f / d; color = withAlpha(0xFFFFFF, .22f) })
+            val pad = 10f * k
+            val m = ink(c, 11.5f * k, surface.ink(w / 2, h - band / 2), 600)
+            val y = h - band
+            cv.drawText(TextUtils.ellipsize(left(a), m, w - 2 * pad, TextUtils.TruncateAt.END).toString(), pad, y + band * .42f + capTop(m) / 2, m)
+            progress(cv, surface, pad, h - band * .22f, w - 2 * pad, a.progress, k * .85f)
         }
     }
 }

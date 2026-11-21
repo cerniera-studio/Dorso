@@ -164,12 +164,12 @@ adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE
 
 # On the nightstand: the widget drawn at a matrix of sizes (portrait, landscape, square, small, large;
 # cover and main screen sizes) in three finishes over a wallpaper-like ground, each kept as drawn
-SIZES="110x190;150x240;180x290;300x150;370x217;250x250;120x120;400x520;560x300"
+SIZES="110x190+150x240+180x290+300x150+370x217+250x250+120x120+400x520+560x300"
 adb shell am start -W -n $PKG/.MainActivity --es nightstand "$SIZES" >/dev/null; sleep 8
 n=0
-for f in vetro carbonio avorio; do for sz in ${SIZES//;/ }; do
+for f in vetro carbonio avorio; do for sz in ${SIZES//+/ }; do
   adb exec-out run-as $PKG cat files/nightstand-$f-$sz.png > "shot-nightstand-$f-$sz.png" 2>/dev/null
-  [ -s "shot-nightstand-$f-$sz.png" ] && n=$((n+1)) || rm -f "shot-nightstand-$f-$sz.png"
+  if head -c 4 "shot-nightstand-$f-$sz.png" | grep -q PNG; then n=$((n+1)); else rm -f "shot-nightstand-$f-$sz.png"; fi
 done; done
 if [ $n -eq 27 ]; then echo "::notice::nightstand drawn at all 9 sizes in 3 finishes"; else echo "::error::nightstand drawn $n of 27"; fail=1; fi
 adb shell am broadcast -a android.appwidget.action.APPWIDGET_UPDATE -n $PKG/.Nightstand --eia appWidgetIds 1 >/dev/null; sleep 2

@@ -104,7 +104,7 @@ class MainActivity : Activity() {
             val ground = com.cerniera.kit.Ground.of(wall, 0, true)
             val a = Nightstand.current(this)
             for (f in listOf(com.cerniera.kit.Finish.VETRO, com.cerniera.kit.Finish.CARBONIO, com.cerniera.kit.Finish.AVORIO)) {
-                for (sz in spec.split(";")) {
+                for (sz in spec.split("+")) {
                     val (w, h) = sz.split("x").map { it.toFloat() }
                     val b = Nightstand.paint(this, w, h, resources.displayMetrics.density, WidgetLook(f, 24f), ground, a)
                     java.io.File(filesDir, "nightstand-${f.name.lowercase()}-${w.toInt()}x${h.toInt()}.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }

@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- On the nightstand: the book, drawn whole by Nightstand.render. -->
+<!-- On the nightstand: one picture drawn at its exact size (as Fold Widgets' are). The root is
+     named "root", as Fold Widgets' and Nodo's are, so Fold Widgets' live mode can find it. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:layoutDirection="ltr"
+    android:clipToOutline="true">
     <ImageView
-        android:id="@+id/book"
+        android:id="@+id/face"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="fitCenter"

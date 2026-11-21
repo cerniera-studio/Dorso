@@ -53,6 +53,7 @@ class ReaderActivity : Activity() {
         val a = id?.let { Store.get(this, it) } ?: run { finish(); return }
         article = a
         a.openedAt = System.currentTimeMillis(); Store.put(this, a)
+        Nightstand.seatFrom(this, intent)
 
         paper = Paper(this).apply { on = prefs().getBoolean("sound", true) }
         reader = ReaderView(this).apply {

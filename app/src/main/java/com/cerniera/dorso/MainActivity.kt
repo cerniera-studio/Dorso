@@ -106,7 +106,7 @@ class MainActivity : Activity() {
             for (f in listOf(com.cerniera.kit.Finish.VETRO, com.cerniera.kit.Finish.CARBONIO, com.cerniera.kit.Finish.AVORIO)) {
                 for (sz in spec.split(";")) {
                     val (w, h) = sz.split("x").map { it.toFloat() }
-                    val b = Nightstand.paint(this, w, h, resources.displayMetrics.density, Nightstand.Look(f, 24f), ground, a)
+                    val b = Nightstand.paint(this, w, h, resources.displayMetrics.density, WidgetLook(f, 24f), ground, a)
                     java.io.File(filesDir, "nightstand-${f.name.lowercase()}-${w.toInt()}x${h.toInt()}.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 }
             }

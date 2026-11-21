@@ -89,21 +89,19 @@ class Nightstand : AppWidgetProvider() {
             return all.filter { it.openedAt > 0 && it.progress < .99f }.maxByOrNull { it.openedAt } ?: all.firstOrNull()
         }
 
-        class Look(val finish: Finish, val radius: Float)
-
         /**
          * Fold Widgets' look when it is installed (the finish and corners chosen there, and the
          * images chosen for each screen's glass, which the Kit's Backdrop reads from this store);
          * otherwise Vetro at radius 24.
          */
-        fun look(c: Context): Look {
-            var look = Look(Finish.VETRO, 24f)
+        fun look(c: Context): WidgetLook {
+            var look = WidgetLook(Finish.VETRO, 24f)
             var images = mapOf<String, String?>("cover" to null, "main" to null)
             runCatching {
                 c.contentResolver.query(Uri.parse("content://$AUTHORITY/look"), null, null, null, null)?.use { cur ->
                     if (cur.moveToFirst()) {
                         val f = runCatching { Finish.valueOf(cur.getString(cur.getColumnIndexOrThrow("finish"))) }.getOrDefault(Finish.VETRO)
-                        look = Look(f, cur.getInt(cur.getColumnIndexOrThrow("radius")).toFloat())
+                        look = WidgetLook(f, cur.getInt(cur.getColumnIndexOrThrow("radius")).toFloat())
                         images = mapOf(
                             "cover" to if (cur.getInt(cur.getColumnIndexOrThrow("image_cover")) == 1) "content://$AUTHORITY/image/cover" else null,
                             "main" to if (cur.getInt(cur.getColumnIndexOrThrow("image_main")) == 1) "content://$AUTHORITY/image/main" else null)
@@ -126,7 +124,7 @@ class Nightstand : AppWidgetProvider() {
                 SizeF(lw.coerceAtLeast(110).toFloat(), lh.coerceAtLeast(110).toFloat())).distinct()
         }
 
-        private fun draw(c: Context, m: AppWidgetManager, id: Int, a: Article?, look: Look) {
+        private fun draw(c: Context, m: AppWidgetManager, id: Int, a: Article?, look: WidgetLook) {
             val d = c.resources.displayMetrics.density
             val ground = Backdrop.ground(c, store(c), id)
             val map = LinkedHashMap<SizeF, RemoteViews>()
@@ -215,7 +213,7 @@ class Nightstand : AppWidgetProvider() {
          * The widget at [w] x [h] dp, drawn at [density] (kept within what a launcher accepts), in
          * [look]'s finish over [ground].
          */
-        fun paint(c: Context, w: Float, h: Float, density: Float, look: Look, ground: Ground, a: Article?): Bitmap {
+        fun paint(c: Context, w: Float, h: Float, density: Float, look: WidgetLook, ground: Ground, a: Article?): Bitmap {
             val d = min(density, sqrt(1_600_000f / (w * h)))
             val bmp = Bitmap.createBitmap(max(1, (w * d).toInt()), max(1, (h * d).toInt()), Bitmap.Config.ARGB_8888)
             val cv = Canvas(bmp); cv.scale(d, d)
@@ -354,6 +352,9 @@ class Nightstand : AppWidgetProvider() {
         }
     }
 }
+
+/** The widget's finish and corners: Fold Widgets' when it is installed. */
+class WidgetLook(val finish: Finish, val radius: Float)
 
 /** Fold Widgets says its look or the wallpaper changed: redraw to match. */
 class NightstandLook : BroadcastReceiver() {

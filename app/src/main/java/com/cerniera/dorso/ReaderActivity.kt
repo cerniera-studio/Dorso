@@ -53,11 +53,13 @@ class ReaderActivity : Activity() {
         val a = id?.let { Store.get(this, it) } ?: run { finish(); return }
         article = a
         a.openedAt = System.currentTimeMillis(); Store.put(this, a)
+        Nightstand.seatFrom(this, intent)
 
         paper = Paper(this).apply { on = prefs().getBoolean("sound", true) }
         reader = ReaderView(this).apply {
             typeStep = prefs().getInt("type", 2)
             paper = this@ReaderActivity.paper
+            tapTurns = prefs().getBoolean("tapTurns", false)
             onMoved = { off, p -> article?.let { it.offset = off; it.progress = p; Store.put(this@ReaderActivity, it) } }
             onTopEdge = { showTrim(true) }
             onSpine = { finish() }
@@ -82,6 +84,11 @@ class ReaderActivity : Activity() {
                 if (paper.on) paper.turn(false)
             })
             addView(button("Marks") { showMarks() })
+            addView(button(if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off") { tapped ->
+                reader.tapTurns = !reader.tapTurns
+                prefs().edit().putBoolean("tapTurns", reader.tapTurns).apply()
+                (tapped as TextView).text = if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off"
+            })
             addView(button("Shelf") { finish() })
         }
         val root = FrameLayout(this)

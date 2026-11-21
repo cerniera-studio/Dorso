@@ -64,6 +64,8 @@ import org.json.JSONObject
  * or type size, the pages are cut afresh so that line starts the left page ([Pager]).
  *
  * The doctrine:
+ * - Turning is by hand: take the page and turn it. Tapping the page's edges to turn is an option,
+ *   off unless chosen on the trim ("Tap to turn").
  * - Membrane: a page is one sheet hinged at the spine (on the main screen, the crease itself). Take
  *   it anywhere and it rolls over a soft cylinder square to your pull, so lifting the lower corner
  *   folds it diagonally, as paper does; the next page shows beneath, the roll casts a shadow, and the
@@ -122,6 +124,12 @@ class ReaderView(c: Context) : View(c) {
     private var leafAnim: ValueAnimator? = null
     private var rectoBmp: Bitmap? = null
     private var versoBmp: Bitmap? = null
+
+    /**
+     * Whether a tap at a page's edge turns it (21 Nov 2026, Mechack: off by default; pages turn by
+     * taking the page and turning it). A tap anywhere then brings the trim.
+     */
+    var tapTurns = false
 
     /** The sound of the paper, played as a page goes over. */
     var paper: Paper? = null
@@ -1084,8 +1092,9 @@ class ReaderView(c: Context) : View(c) {
                 e.y < h * .1f -> onTopEdge?.invoke()
                 mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
                 mode == Mode.STACK && abs(e.y - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
-                e.x < w * .3f -> turn(-1)
-                e.x > w * .7f -> turn(1)
+                // Pages turn by hand, as paper does; tapping the edges turns them only if chosen
+                tapTurns && e.x < w * .3f -> turn(-1)
+                tapTurns && e.x > w * .7f -> turn(1)
                 else -> onMiddle?.invoke()
             }
             return true

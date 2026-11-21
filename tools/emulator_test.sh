@@ -87,13 +87,14 @@ if [ "$(field closed)" = "True" ] && [ "$(offset)" = "$b" ]; then echo "::notice
 size 1680 719; sleep 2; adb exec-out screencap -p > shot-cover-turned.png
 if crashed; then echo "::error::crash on the cover"; fail=1; fi
 
-# Unfolded: reading. A tap on the right turns the page forward.
+# Unfolded: reading. Pages turn by hand only: a tap at the right edge must not turn the page
+# (tapping to turn is an option, off unless chosen).
 size 1503 1568; sleep 2
 before=$(offset)
 adb shell input tap 1400 800; sleep 1.5
 after=$(offset)
-if [ "$after" -gt "$before" ]; then echo "::notice::turned: $before -> $after"; else echo "::error::page did not turn ($before -> $after)"; fail=1; fi
-adb exec-out screencap -p > shot-turned.png
+if [ "$after" = "$before" ]; then echo "::notice::a tap did not turn the page (turning is by hand)"; else echo "::error::a tap turned the page ($before -> $after)"; fail=1; fi
+sleep 4      # the tap brought the trim; let it sink
 
 # The leaf: take the page by its edge, hold it part way over (photographed), then let it go.
 # Past halfway it must fall over (forward: the place moves on; back: it moves back).
@@ -162,14 +163,16 @@ adb exec-out screencap -p > shot-signin.png
 if adb shell dumpsys activity activities | grep -q "SignInActivity"; then echo "::notice::sign-in page opened"; else echo "::warning::sign-in page not in front"; fi
 adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
 
-# On the nightstand: the widget's drawing of the book being read, at its usual size and a larger one,
-# saved as drawn (clear ground); and an update broadcast to the provider must not crash
-for sz in 110,190 170,280; do
-  adb shell am start -W -n $PKG/.MainActivity --es nightstand $sz >/dev/null; sleep 4
-  adb exec-out run-as $PKG cat files/nightstand.png > "shot-nightstand-${sz/,/x}.png"
-  if [ -s "shot-nightstand-${sz/,/x}.png" ]; then echo "::notice::nightstand drawn at ${sz} dp"
-  else echo "::error::nightstand not drawn at ${sz}"; fail=1; fi
-done
+# On the nightstand: the widget drawn at a matrix of sizes (portrait, landscape, square, small, large;
+# cover and main screen sizes) in three finishes over a wallpaper-like ground, each kept as drawn
+SIZES="110x190+150x240+180x290+300x150+370x217+250x250+120x120+400x520+560x300"
+adb shell am start -W -n $PKG/.MainActivity --es nightstand "$SIZES" >/dev/null; sleep 8
+n=0
+for f in vetro carbonio avorio; do for sz in ${SIZES//+/ }; do
+  adb exec-out run-as $PKG cat files/nightstand-$f-$sz.png > "shot-nightstand-$f-$sz.png" 2>/dev/null
+  if head -c 4 "shot-nightstand-$f-$sz.png" | grep -q PNG; then n=$((n+1)); else rm -f "shot-nightstand-$f-$sz.png"; fi
+done; done
+if [ $n -eq 27 ]; then echo "::notice::nightstand drawn at all 9 sizes in 3 finishes"; else echo "::error::nightstand drawn $n of 27"; fail=1; fi
 adb shell am broadcast -a android.appwidget.action.APPWIDGET_UPDATE -n $PKG/.Nightstand --eia appWidgetIds 1 >/dev/null; sleep 2
 
 if crashed; then echo "::error::Dorso crashed"; fail=1; fi

@@ -4,6 +4,12 @@
     <!-- Fetching the pages you share to it; nothing else goes out -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <queries>
+        <!-- Fold Widgets' look (finish, corners, the glass's images), as Nodo reads it. As a package,
+             not a provider: the Kit may list providers, and two entries collide when manifests merge -->
+        <package android:name="com.fergusonconsultancy.foldwidgets" />
+    </queries>
+
     <application
         android:name=".DorsoApp"
         android:allowBackup="true"
@@ -54,6 +60,10 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/nightstand_info" />
+        </receiver>
+        <!-- Fold Widgets says its look or the wallpaper changed -->
+        <receiver android:name=".NightstandLook" android:exported="true">
+            <intent-filter><action android:name="com.cerniera.LOOK_CHANGED" /></intent-filter>
         </receiver>
     </application>
 </manifest>

@@ -3,6 +3,9 @@ package com.cerniera.dorso
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.graphics.Paint
+import android.graphics.Canvas
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -87,12 +90,26 @@ class MainActivity : Activity() {
             save(i.getStringExtra(Intent.EXTRA_TEXT) ?: "")
             return
         }
-        // For the emulator walk: draw the nightstand at a size (w,h in dp) into files/, to photograph
+        Nightstand.seatFrom(this, i)
+        // For the emulator walk: draw the nightstand at each of a matrix of sizes (dp) in several
+        // finishes over a wallpaper-like ground, into files/nightstand-<finish>-<w>x<h>.png
         i.getStringExtra("nightstand")?.let { spec ->
-            val (w, h) = spec.split(',').map { (it.toFloat() * resources.displayMetrics.density).toInt() }
-            Kit.follow(this)
-            val b = Nightstand.render(this, Nightstand.current(this), w, h)
-            java.io.File(filesDir, "nightstand.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            val wall = Bitmap.createBitmap(240, 240, Bitmap.Config.ARGB_8888).also { b ->
+                val g = Canvas(b)
+                g.drawRect(0f, 0f, 240f, 240f, Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, 240f, 240f,
+                    intArrayOf(0xFF3A4B57.toInt(), 0xFF7A6A52.toInt(), 0xFF1E2A26.toInt()), null, android.graphics.Shader.TileMode.CLAMP) })
+                val band = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 6f; color = 0x33FFFFFF }
+                var x = -240f; while (x < 240f) { g.drawLine(x, 240f, x + 240f, 0f, band); x += 28f }
+            }
+            val ground = com.cerniera.kit.Ground.of(wall, 0, true)
+            val a = Nightstand.current(this)
+            for (f in listOf(com.cerniera.kit.Finish.VETRO, com.cerniera.kit.Finish.CARBONIO, com.cerniera.kit.Finish.AVORIO)) {
+                for (sz in spec.split("+")) {
+                    val (w, h) = sz.split("x").map { it.toFloat() }
+                    val b = Nightstand.paint(this, w, h, resources.displayMetrics.density, WidgetLook(f, 24f), ground, a)
+                    java.io.File(filesDir, "nightstand-${f.name.lowercase()}-${w.toInt()}x${h.toInt()}.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                }
+            }
             Nightstand.refresh(this)
             i.removeExtra("nightstand")
         }

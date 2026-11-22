@@ -86,7 +86,7 @@ internal class Swing(private val dp: Float) {
 
     // ---- The shape
 
-    private val eye get() = 2.6f * max(w, h)
+    private val eye get() = 3.0f * max(w, h)
 
     /** The leaf's lean at the spine and how it bows out to the fore-edge, for row offset [lead]. */
     private fun bend(p: Float, lead: Float) {
@@ -125,7 +125,7 @@ internal class Swing(private val dp: Float) {
         for (j in 0..rows) {
             val v = h * j / rows
             // The held corner leads: rows away from the hand trail, held up a little longer
-            val lead = .30f * ((v - holdV) / h).let { it * it }.coerceAtMost(1f) * if (p < .98f) 1f else 0f
+            val lead = .24f * ((v - holdV) / h).let { it * it }.coerceAtMost(1f) * if (p < .98f) 1f else 0f
             bend(p, lead)
             for (i in 0..cols) {
                 val k = j * (cols + 1) + i

@@ -108,6 +108,13 @@ class ReaderActivity : Activity() {
             insets
         }
         setContentView(root)
+        // For the emulator walk: photograph the back swing (debug builds only)
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            frames = object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context, i: Intent) { reader.swingFrames(filesDir) }
+            }
+            registerReceiver(frames, android.content.IntentFilter("com.cerniera.dorso.SWING_FRAMES"), Context.RECEIVER_EXPORTED)
+        }
         // Only once the window has its content: before that the decor view doesn't exist yet
         window.insetsController?.let {
             it.hide(WindowInsets.Type.systemBars())
@@ -128,7 +135,10 @@ class ReaderActivity : Activity() {
         }.start()
     }
 
+    private var frames: android.content.BroadcastReceiver? = null
+
     override fun onDestroy() {
+        frames?.let { runCatching { unregisterReceiver(it) } }
         if (::paper.isInitialized) paper.release()
         super.onDestroy()
     }

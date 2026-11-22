@@ -125,7 +125,7 @@ class ReaderView(c: Context) : View(c) {
     private var slipX = 0f
     private var slipAnim: ValueAnimator? = null
     private var slipBmp: Bitmap? = null
-    private val shadePaint = Paint()
+    private val swing = Swing(c.resources.displayMetrics.density)
     /** Which side the leaf started on: 1 the recto (turning forward), -1 the verso (turning back). */
     private var sigma = 1
     private var leafAnim: ValueAnimator? = null
@@ -772,34 +772,45 @@ class ReaderView(c: Context) : View(c) {
     // ---- One page, going back: the page before, from behind the fold
 
     /** Prints page [a] as it lies on the screen, to be drawn out from behind the left edge. */
-    private fun beginSlip(a: Int) {
+    private fun beginSlip(a: Int, holdV: Float = height * .72f) {
         slipA = a; slipX = 0f
         val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
         val b = slipBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(b).apply { drawColor(Kit.GROUND); drawPaint(grain()); pageAt(a, 0)?.let { drawPage(this, it, textRects[0], 0) } }
         slipBmp = b
+        swing.set(b, holdV)
     }
 
     /**
-     * The page before coming round the fold: its fore-edge leads in from the left edge, the rest of
-     * it still behind; where it turns round the fold it falls into shadow, and it casts a soft one
-     * on the page it is laying itself over.
+     * The page before, swung back over the spine and laid on the page you're on (see [Swing]): its
+     * fore-edge has come [slipX] onto the page.
      */
     private fun drawSlip(c: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat()
-        val x = slipX.coerceIn(0f, w)
+        val w = width.toFloat()
         pageAt(slipA + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
-        if (x <= 0f) return
-        val sh = 22f * dp
-        shadePaint.shader = LinearGradient(x, 0f, x + sh, 0f, withAlpha(0x000000, if (Kit.dark) .45f else .16f), 0, Shader.TileMode.CLAMP)
-        c.drawRect(x, 0f, min(w, x + sh), h, shadePaint)
-        slipBmp?.let { b -> c.save(); c.clipRect(0f, 0f, x, h); c.drawBitmap(b, x - w, 0f, null); c.restore() }
-        val wrap = min(x, 16f * dp)
-        shadePaint.shader = LinearGradient(0f, 0f, wrap, 0f, withAlpha(0x000000, if (Kit.dark) .5f else .2f), 0, Shader.TileMode.CLAMP)
-        c.drawRect(0f, 0f, wrap, h, shadePaint)
-        shadePaint.shader = null
-        shadePaint.color = if (Kit.dark) withAlpha(0xF3ECDD, .28f) else withAlpha(0x000000, .10f)
-        c.drawRect(x - .9f * dp, 0f, x, h, shadePaint)
+        val p = swing.progressFor(slipX.coerceIn(0f, w))
+        if (p <= 0f) return
+        swing.gloss = if (Kit.dark) .30f else .16f
+        swing.drawShadow(c, p, Kit.dark)
+        swing.shape(p, Kit.dark)
+        swing.draw(c, if (Kit.dark) withAlpha(0xF3ECDD, .30f) else withAlpha(0x000000, .12f))
+    }
+
+    /**
+     * For the emulator walk: the back swing photographed at several moments, on one page, into
+     * [dir]/swing-<percent>.png (the fore-edge that far across).
+     */
+    fun swingFrames(dir: java.io.File) {
+        if (mode != Mode.SINGLE || spread <= 0 || width < 1) return
+        settleNow()
+        beginSlip(spread - 1)
+        for (f in intArrayOf(8, 20, 35, 50, 65, 80, 92)) {
+            slipX = width * f / 100f
+            val b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            draw(Canvas(b))
+            java.io.File(dir, "swing-$f.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        slipA = -1; invalidate()
     }
 
     /** Carries the fore-edge to [to] (the right edge: laid down; 0: back behind the fold). */
@@ -1012,7 +1023,7 @@ class ReaderView(c: Context) : View(c) {
         if (pulling) {
             // The page before is behind the fold: draw it out round the left edge, its fore-edge
             // where the finger has carried it
-            beginSlip(target)
+            beginSlip(target, downY)
             dragging = true
             parent?.requestDisallowInterceptTouchEvent(true)
             follow(e)

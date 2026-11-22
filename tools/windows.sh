@@ -128,6 +128,14 @@ else
       if [ -n "$o2" ] && [ "$o2" -lt "$o1" ]; then note "One page, drag back: the page before came back ($o1 -> $o2)"
       else fail "One page, drag back: the page before did not come back ($o1 -> ${o2:-unknown})"; fi
     else warn "One page drags: the forward drag didn't turn the page ($o0 -> $o1), so the drag back wasn't checked"; fi
+    # The back swing photographed at seven moments (fore-edge 8% to 92% across)
+    adb shell am broadcast -a com.cerniera.dorso.SWING_FRAMES >/dev/null; sleep 3
+    got=0
+    for f in 8 20 35 50 65 80 92; do
+      adb exec-out run-as $PKG cat files/swing-$f.png > shot-win-swing-$f.png 2>/dev/null
+      head -c 4 shot-win-swing-$f.png | grep -q PNG && got=$((got+1))
+    done
+    if [ $got -eq 7 ]; then note "One page, back swing: seven frames drawn"; else fail "One page, back swing: $got of 7 frames drawn"; fi
     # 4. Widened again
     back=$(layout)
     clear_layout; timeout 20 adb shell am task resize "$id" 0 0 1400 1568; sleep 2

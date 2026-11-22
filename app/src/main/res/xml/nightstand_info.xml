@@ -9,6 +9,7 @@
     android:targetCellHeight="3"
     android:maxResizeWidth="560dp"
     android:maxResizeHeight="520dp"
+    android:previewImage="@drawable/preview_widget"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/nightstand"

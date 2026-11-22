@@ -22,6 +22,7 @@ import android.util.SizeF
 import android.widget.RemoteViews
 import com.cerniera.kit.Backdrop
 import com.cerniera.kit.Finish
+import com.cerniera.kit.Grammar
 import com.cerniera.kit.Ground
 import com.cerniera.kit.Kit
 import com.cerniera.kit.Shapes
@@ -178,7 +179,8 @@ class Nightstand : AppWidgetProvider() {
         }
 
         private fun draw(c: Context, m: AppWidgetManager, id: Int, a: Article?, look: WidgetLook) {
-            val d = c.resources.displayMetrics.density
+            // The density of the screen in use now (on the Fold, the app's own resources can carry the other screen's)
+            val d = Backdrop.density(c)
             val ground = Backdrop.ground(c, store(c), id, live(c, id))
             val map = LinkedHashMap<SizeF, RemoteViews>()
             for ((i, s) in sizes(m, id).withIndex()) {
@@ -232,112 +234,108 @@ class Nightstand : AppWidgetProvider() {
                 typeface = Kit.sans(c, weight); textSize = size; color = colour; letterSpacing = tracking
             }
 
-        /** [s] in at most [lines] lines of [width], breaking only between words, ending on a word and an ellipsis. */
-        private fun wrap(s: String, p: TextPaint, width: Float, lines: Int): List<String> {
-            val words = s.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-            val out = ArrayList<String>(); var i = 0
-            while (i < words.size && out.size < lines) {
-                var line = words[i]; i++
-                if (p.measureText(line) > width) { out += TextUtils.ellipsize(line, p, width, TextUtils.TruncateAt.END).toString(); continue }
-                while (i < words.size && p.measureText("$line ${words[i]}") <= width) { line += " " + words[i]; i++ }
-                out += line
-            }
-            if (i < words.size && out.isNotEmpty()) {
-                val last = out.removeAt(out.size - 1).split(" ").toMutableList()
-                while (last.size > 1 && p.measureText(last.joinToString(" ") + "…") > width) last.removeAt(last.size - 1)
-                out += TextUtils.ellipsize(last.joinToString(" ") + "…", p, width, TextUtils.TruncateAt.END).toString()
-            }
-            return out
-        }
-
-        /** The title as large as fits in [lines] lines, from [sizes] largest first, never splitting a word. */
-        private fun title(c: Context, s: String, colour: Int, width: Float, lines: Int, sizes: List<Float>): Pair<TextPaint, List<String>> {
-            for (size in sizes) {
-                val p = ink(c, size, colour, 600)
-                if (s.split(Regex("\\s+")).all { p.measureText(it) <= width }) {
-                    val w = wrap(s, p, width, lines)
-                    if (w.none { it.endsWith("…") }) return p to w
-                }
-            }
-            val p = ink(c, sizes.last(), colour, 600)
-            return p to wrap(s, p, width, lines)
-        }
-
         private fun capTop(p: Paint) = -p.fontMetrics.ascent * .72f
 
         /**
          * The widget at [w] x [h] dp, drawn at [density] (kept within what a launcher accepts), in
-         * [look]'s finish over [ground].
+         * [look]'s finish over [ground]. Composed from the family's widget grammar (Kit Grammar,
+         * 22 Nov 2026), so it shares Fold Widgets' shapes, scale, inset, label and foot:
+         *  - COLUMN: the book as wide as the widget allows, its words beneath, the line at the foot.
+         *    (Before: a book capped at three quarters of the width floated in an empty tall box.)
+         *  - ROW and STRIP: the book standing at the left, full height; label, title grown to fill
+         *    the column, author, and the foot beside it.
+         *  - SQUARE: the book at the top left with the label and author beside it, the title across
+         *    the full width resting on the foot (before: a title squeezed beside the book into
+         *    "Enthusi… Who…").
+         *  - Small: the jacket, full bleed, with a band of the finish at the foot.
          */
         fun paint(c: Context, w: Float, h: Float, density: Float, look: WidgetLook, ground: Ground, a: Article?): Bitmap {
             val d = min(density, sqrt(1_600_000f / (w * h)))
             val bmp = Bitmap.createBitmap(max(1, (w * d).toInt()), max(1, (h * d).toInt()), Bitmap.Config.ARGB_8888)
             val cv = Canvas(bmp); cv.scale(d, d)
             val radius = min(look.radius, min(w, h) / 2)
-            val k = if (min(w, h) >= 300f) min(1.5f, min(w, h) / 300f) else 1f
-            val pad = 14f * k
+            val k = Grammar.scale(w, h)
+            val pad = Grammar.inset(w, h, k)
             val surface = Surface(look.finish, ground, w, h, radius, 1.1f / d)
 
             if (a == null) {
                 surface.paint(cv)
-                val t = ink(c, 17f * k, surface.ink(w / 2, h * .45f), 600).apply { textAlign = Paint.Align.CENTER }
-                cv.drawText("Share a long read", w / 2, h * .47f, t)
-                val m = ink(c, 12.5f * k, surface.muted(w / 2, h * .58f), 500).apply { textAlign = Paint.Align.CENTER }
-                wrap("It waits here, like a book on the nightstand.", m, w - 2 * pad, 2).forEachIndexed { i, l -> cv.drawText(l, w / 2, h * .47f + 22f * k + i * 17f * k, m) }
+                Grammar.eyebrow(c, cv, surface, "Dorso", pad, pad, w - 2 * pad, k)
+                Grammar.statement(c, cv, surface, "Share a long read", "It waits here, like a book on the nightstand.", pad, h - pad, w - 2 * pad, k)
                 return bmp
             }
 
-            // Too small for a book beside its words: the jacket full bleed, the title over a shade
-            if (min(w, h) < 125f || (w < 150f && h < 220f)) { cover(c, cv, w, h, d, radius, k, a, surface); return bmp }
+            // Too small for a book beside its words: the jacket full bleed, the time left on a band
+            if (min(w, h) < 90f || (w < 150f && h < 200f)) { cover(c, cv, w, h, d, radius, k, a, surface); return bmp }
 
             surface.paint(cv)
-            val portrait = h >= 1.3f * w
-            val label = if (a.progress >= .01f) "READING" else "UP NEXT"
+            val label = if (a.progress >= .01f) "Reading" else "Up next"
             val meta = listOfNotNull(left(a), a.site.takeIf { it.isNotBlank() })
-            if (portrait) {
-                // Label, the book standing in the middle, then its words and the progress line
-                val lab = ink(c, 11f * k, surface.ink(pad, pad), 600, .14f)
-                cv.drawText(label, pad, pad + capTop(lab), lab)
-                val colW = w - 2 * pad
-                val (tp, tl) = title(c, a.title, surface.ink(w / 2, h * .8f), colW, 2, listOf(17f, 15.5f, 14.5f).map { it * k })
-                val mp = ink(c, 12.5f * k, surface.muted(w / 2, h * .9f), 500)
-                val lineH = tp.textSize * 1.22f
-                val textH = tl.size * lineH + 6f * k + mp.textSize * 1.25f + 12f * k
-                val bookTop = pad + lab.textSize + 10f * k
-                val bookBottom = h - pad - textH - 10f * k
-                var bh = bookBottom - bookTop; var bw = bh * .64f
-                if (bw > colW * .78f) { bw = colW * .78f; bh = bw / .64f }
-                val top = bookTop + (bookBottom - bookTop - bh) / 2
-                drawBook(c, cv, RectF((w - bw) / 2, top, (w + bw) / 2, top + bh), d, a)
-                var y = bookBottom + 10f * k
-                tl.forEach { l -> tp.color = surface.ink(pad + 10f, y + lineH / 2); cv.drawText(l, pad, y + capTop(tp), tp); y += lineH }
-                metaLine(cv, meta, mp, pad, y + 6f * k + capTop(mp), colW)
-                progress(cv, surface, pad, h - pad - 2f * k, colW, a.progress, k)
-            } else {
-                // The book at the left, its words beside it
-                var bh = h - 2 * pad; var bw = bh * .64f
-                if (bw > w * .42f) { bw = w * .42f; bh = bw / .64f }
-                val book = RectF(pad, (h - bh) / 2, pad + bw, (h + bh) / 2)
-                drawBook(c, cv, book, d, a)
-                val x = book.right + 16f * k; val colW = w - x - pad
-                val lab = ink(c, 11f * k, surface.ink(x + 10f, pad), 600, .14f)
-                var y = pad
-                cv.drawText(label, x, y + capTop(lab), lab); y += lab.textSize + 12f * k
-                val mp = ink(c, 12.5f * k, surface.muted(x + colW / 2, h - pad - 20f * k), 500)
-                val room = h - y - pad - (mp.textSize * 1.25f + 18f * k)
-                val maxLines = max(1, min(4, (room / (19f * k * 1.22f)).toInt()))
-                val (tp, tl) = title(c, a.title, surface.ink(x + colW / 2, h / 2), colW, maxLines, listOf(19f, 17f, 15.5f, 14.5f).map { it * k })
-                val lineH = tp.textSize * 1.22f
-                tl.forEach { l -> tp.color = surface.ink(x + 10f, y + lineH / 2); cv.drawText(l, x, y + capTop(tp), tp); y += lineH }
-                // The author, under the title, where there's room above the foot
-                val by = byline(a)
-                val foot = h - pad - 12f * k - mp.textSize * 1.6f
-                if (by != null && y + 6f * k + mp.textSize < foot) {
-                    val bp = ink(c, 12.5f * k, surface.muted(x + colW / 2, y + 10f), 500)
-                    cv.drawText(TextUtils.ellipsize(by, bp, colW, TextUtils.TruncateAt.END).toString(), x, y + 6f * k + capTop(bp), bp)
+            val mp = Grammar.meta(c, k, surface.muted(w / 2, h - pad - 10f * k))
+            val lineY = h - pad - Grammar.LINE * k / 2
+            val metaBase = lineY - Grammar.LINE * k / 2 - 8f * k          // the meta line sits just above the progress line
+            val footTop = metaBase - Grammar.cap(mp) - Grammar.GAP * k   // where the words above it must end
+            val ASPECT = .64f
+            // A square under 220 dp is too small for the title across the foot: it takes the row's arrangement
+            // and a larger square stands the book above its words, as a column does (the book can then be as tall as the room)
+            val shape = Grammar.shape(w, h).let { if (it != Grammar.Shape.SQUARE) it else if (min(w, h) < 220f) Grammar.Shape.ROW else Grammar.Shape.COLUMN }
+            when (shape) {
+                Grammar.Shape.COLUMN -> {
+                    val colW = w - 2 * pad
+                    val top = Grammar.eyebrow(c, cv, surface, label, pad, pad, colW, k)
+                    // The book first, as wide as the column (less its page edges); the title then takes the
+                    // room beneath, at the largest size that fits in up to four lines
+                    val edge = { bw: Float -> max(2.5f, bw * .045f) }
+                    val minTitle = Grammar.title(c, a.title, 0, colW, 3 * 14.5f * k * Grammar.LEAD, k, 3, largest = 14.5f)
+                    var bw = colW - edge(colW); var bh = bw / ASPECT
+                    val maxBh = footTop - top - Grammar.GAP * k - minTitle.height - Grammar.GAP * k
+                    if (bh > maxBh) { bh = maxBh; bw = bh * ASPECT }
+                    val room = footTop - (top + bh + Grammar.GAP * k * 1.4f)
+                    val t = Grammar.title(c, a.title, surface.ink(w / 2, h * .8f), colW, room, k, 4, largest = 32f)
+                    // Whatever is still left is shared: above the book and between book and title
+                    val spare = (room - t.height).coerceAtLeast(0f)
+                    val bookTop = top + spare / 2
+                    drawBook(c, cv, RectF(pad + (colW - bw - edge(bw)) / 2, bookTop, pad + (colW - bw - edge(bw)) / 2 + bw, bookTop + bh), d, a)
+                    t.draw(cv, pad, footTop - t.height)
+                    metaLine(cv, meta, mp, pad, metaBase, colW)
+                    Grammar.line(cv, surface, pad, lineY, colW, a.progress, k)
                 }
-                metaLine(cv, meta, mp, x, h - pad - 12f * k - mp.textSize * .3f, colW)
-                progress(cv, surface, x, h - pad - 2f * k, colW, a.progress, k)
+                Grammar.Shape.SQUARE -> {
+                    val colW = w - 2 * pad
+                    // The title across the full width, resting on the foot; the book takes the height above it
+                    val t0 = Grammar.title(c, a.title, surface.ink(w / 2, h * .7f), colW, (footTop - pad) * .42f, k, 3, largest = 24f)
+                    val bookBottom = footTop - t0.height - Grammar.GAP * k * 1.4f
+                    var bh = bookBottom - pad; var bw = bh * ASPECT
+                    if (bw > colW * .46f) { bw = colW * .46f; bh = bw / ASPECT }
+                    drawBook(c, cv, RectF(pad, bookBottom - bh, pad + bw, bookBottom), d, a)
+                    val x = pad + bw + max(2.5f, bw * .045f) + 14f * k; val sideW = w - pad - x
+                    var y = Grammar.eyebrow(c, cv, surface, label, x, bookBottom - bh, sideW, k)
+                    byline(a)?.let { by ->
+                        val bp = Grammar.meta(c, k, surface.muted(x + sideW / 2, y + 6f))
+                        for (l in Grammar.wrap(by, bp, sideW, 2)) { cv.drawText(l, x, y + Grammar.cap(bp), bp); y += bp.textSize * 1.3f }
+                    }
+                    t0.draw(cv, pad, footTop - t0.height)
+                    metaLine(cv, meta, mp, pad, metaBase, colW)
+                    Grammar.line(cv, surface, pad, lineY, colW, a.progress, k)
+                }
+                else -> {
+                    // ROW and STRIP: the book at the left, its words beside it
+                    var bh = h - 2 * pad; var bw = bh * ASPECT
+                    if (bw > w * .42f) { bw = w * .42f; bh = bw / ASPECT }
+                    val book = RectF(pad, (h - bh) / 2, pad + bw, (h + bh) / 2)
+                    drawBook(c, cv, book, d, a)
+                    val x = book.right + max(2.5f, bw * .045f) + 16f * k; val colW = w - x - pad
+                    val y = Grammar.eyebrow(c, cv, surface, label, x, pad, colW, k)
+                    val by = byline(a)
+                    val bp = Grammar.meta(c, k, surface.muted(x + colW / 2, h / 2))
+                    val byH = if (by != null) bp.textSize * 1.6f else 0f
+                    // The title grows to fill the column between the label and the foot
+                    val t = Grammar.title(c, a.title, surface.ink(x + colW / 2, h / 2), colW, footTop - y - byH, k, 5, largest = 28f)
+                    val end = t.draw(cv, x, y)
+                    if (by != null && end + byH <= footTop + 1f) cv.drawText(Grammar.fit(by, bp, colW), x, end + 6f * k + Grammar.cap(bp), bp)
+                    metaLine(cv, meta, mp, x, metaBase, colW)
+                    Grammar.line(cv, surface, x, lineY, colW, a.progress, k)
+                }
             }
             return bmp
         }
@@ -347,13 +345,6 @@ class Nightstand : AppWidgetProvider() {
             var s = parts.joinToString("  ·  ")
             if (p.measureText(s) > width) s = parts.first()
             cv.drawText(TextUtils.ellipsize(s, p, width, TextUtils.TruncateAt.END).toString(), x, baseline, p)
-        }
-
-        /** How far in: a fine track in the faint ink, the read part in the finish's light. */
-        private fun progress(cv: Canvas, s: Surface, x: Float, y: Float, width: Float, p: Float, k: Float) {
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND; strokeWidth = 2.4f * k }
-            paint.color = s.faint(x + width / 2, y); cv.drawLine(x, y, x + width, y, paint)
-            if (p > .01f) { paint.color = s.accent(x + width / 2, y); cv.drawLine(x, y, x + width * p.coerceIn(0f, 1f), y, paint) }
         }
 
         /**
@@ -406,7 +397,7 @@ class Nightstand : AppWidgetProvider() {
             val m = ink(c, 11.5f * k, surface.ink(w / 2, h - band / 2), 600)
             val y = h - band
             cv.drawText(TextUtils.ellipsize(left(a), m, w - 2 * pad, TextUtils.TruncateAt.END).toString(), pad, y + band * .42f + capTop(m) / 2, m)
-            progress(cv, surface, pad, h - band * .22f, w - 2 * pad, a.progress, k * .85f)
+            Grammar.line(cv, surface, pad, h - band * .22f, w - 2 * pad, a.progress, k * .85f)
         }
     }
 }

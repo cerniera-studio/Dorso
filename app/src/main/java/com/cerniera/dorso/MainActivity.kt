@@ -112,6 +112,14 @@ class MainActivity : Activity() {
                     java.io.File(filesDir, "nightstand-${f.name.lowercase()}-${w.toInt()}x${h.toInt()}.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 }
             }
+            // The picker's preview: Carbonio at the widget's 2x3 size, on the family's one preview canvas
+            // (960 px square at 2.625 px per dp, as Fold Widgets' previews), so it shows at true size beside theirs
+            a?.let {
+                val pv = Nightstand.paint(this, 128f, 267f, 2.625f, WidgetLook(com.cerniera.kit.Finish.CARBONIO, 24f), com.cerniera.kit.Ground.flat(0xFF16191A.toInt()), it)
+                val out = Bitmap.createBitmap(960, 960, Bitmap.Config.ARGB_8888)
+                Canvas(out).drawBitmap(pv, ((960 - pv.width) / 2).toFloat(), ((960 - pv.height) / 2).toFloat(), null)
+                java.io.File(filesDir, "preview_nightstand.png").outputStream().use { o -> out.compress(Bitmap.CompressFormat.PNG, 100, o) }
+            }
             Nightstand.refresh(this)
             i.removeExtra("nightstand")
         }

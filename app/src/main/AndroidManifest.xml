@@ -4,6 +4,12 @@
     <!-- Fetching the pages you share to it; nothing else goes out -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Who may read the read you're partway through: the family's apps (Momento in Fold Widgets) -->
+    <permission
+        android:name="com.cerniera.dorso.permission.READING"
+        android:label="See the read you're partway through in Dorso"
+        android:protectionLevel="normal" />
+
     <queries>
         <!-- Fold Widgets' look (finish, corners, the glass's images), as Nodo reads it. As a package,
              not a provider: the Kit may list providers, and two entries collide when manifests merge -->
@@ -61,6 +67,12 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/nightstand_info" />
         </receiver>
+        <!-- The read you're partway through, for Momento's notes (22 Nov 2026) -->
+        <provider
+            android:name=".ReadingProvider"
+            android:authorities="com.cerniera.dorso.reading"
+            android:exported="true"
+            android:readPermission="com.cerniera.dorso.permission.READING" />
         <!-- Fold Widgets says its look or the wallpaper changed -->
         <receiver android:name=".NightstandLook" android:exported="true">
             <intent-filter><action android:name="com.cerniera.LOOK_CHANGED" /></intent-filter>

@@ -134,6 +134,21 @@ adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2
 adb exec-out screencap -p > shot-shelf-after.png
 
+# Opened from the widget the book is alone in its task. The spine, Back and Shelf must all close it
+# onto the shelf, never onto the home screen.
+front() { adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity" | tr -d '\r'; }
+wh=$(adb shell wm size | tr -d '\r' | awk -F': ' '/Override/{print $2}'); [ -z "$wh" ] && wh=$(adb shell wm size | tr -d '\r' | awk -F': ' '{print $2}')
+cx=$(( ${wh%x*} / 2 )); cy=$(( ${wh#*x} / 2 ))
+for how in spine back; do
+  adb shell am start -W -n $PKG/.MainActivity --es lone sample >/dev/null; sleep 4
+  if ! front | grep -q ReaderActivity; then echo "::error::lone book did not open ($(front))"; fail=1; continue; fi
+  if [ $how = spine ]; then adb shell input tap $cx $cy; else adb shell input keyevent KEYCODE_BACK; fi
+  sleep 2
+  if front | grep -q "MainActivity"; then echo "::notice::from the widget, $how closes the book onto the shelf"
+  else echo "::error::from the widget, $how left the shelf ($(front))"; fail=1; fi
+  adb exec-out screencap -p > shot-lone-$how.png
+done
+
 # A real Medium link, shared in. Medium answers a plain download with 403 (Cloudflare), so this
 # goes through the hidden browser. A data-centre runner can be challenged harder than a phone, so a
 # miss is a warning; a crash still fails the run.

@@ -117,6 +117,13 @@ class MainActivity : Activity() {
         }
         // For the emulator walk: a sign-in page, by site
         i.getStringExtra("signin")?.let { SignInActivity.open(this, site = it); i.removeExtra("signin"); return }
+        // For the emulator walk: open the sample alone in a task of its own, as the widget does
+        if (i.getStringExtra("lone") == "sample") Store.all(this).firstOrNull { it.url == SAMPLE_URL }?.let { a ->
+            i.removeExtra("lone")
+            startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_ID, a.id)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+            finish(); return
+        }
         // For the emulator walk: open the sample straight into the reader
         if (i.getStringExtra("open") == "sample") Store.all(this).firstOrNull { it.url == SAMPLE_URL }?.let { a ->
             i.getStringExtra("at")?.toIntOrNull()?.let { a.offset = it; Store.put(this, a) }

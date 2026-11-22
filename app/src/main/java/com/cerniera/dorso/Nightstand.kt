@@ -277,7 +277,8 @@ class Nightstand : AppWidgetProvider() {
             val footTop = metaBase - Grammar.cap(mp) - Grammar.GAP * k   // where the words above it must end
             val ASPECT = .64f
             // A square under 220 dp is too small for the title across the foot: it takes the row's arrangement
-            val shape = Grammar.shape(w, h).let { if (it == Grammar.Shape.SQUARE && min(w, h) < 220f) Grammar.Shape.ROW else it }
+            // and a larger square stands the book above its words, as a column does (the book can then be as tall as the room)
+            val shape = Grammar.shape(w, h).let { if (it != Grammar.Shape.SQUARE) it else if (min(w, h) < 220f) Grammar.Shape.ROW else Grammar.Shape.COLUMN }
             when (shape) {
                 Grammar.Shape.COLUMN -> {
                     val colW = w - 2 * pad

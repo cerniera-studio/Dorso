@@ -112,6 +112,22 @@ else
     turned=$(layout); shot turned
     check "Narrow pop-up window, phone turned" SINGLE "$narrow" "$turned"
     adb shell settings put system user_rotation 0; sleep 4
+    # One page: a drag forward, then back. Going back, the page before comes round the fold
+    # from behind (photographed half way). If the forward drag doesn't land either, the input
+    # isn't reaching the pop-up window, and the check is skipped rather than failed.
+    off() { layout | python3 -c "import json,sys; print(json.load(sys.stdin)['offset'])" 2>/dev/null; }
+    drag() {  # name y x-from x-hold x-to
+      adb shell input motionevent DOWN $3 $2
+      for i in 1 2 3 4 5 6; do adb shell input motionevent MOVE $(( $3 + ($4 - $3) * i / 6 )) $2; done
+      sleep 0.4; shot "$1"
+      adb shell input motionevent MOVE $5 $2; adb shell input motionevent UP $5 $2; sleep 1.5
+    }
+    o0=$(off); drag forward 900 650 380 60; o1=$(off)
+    if [ -n "$o0" ] && [ -n "$o1" ] && [ "$o1" -gt "$o0" ]; then
+      drag back 900 40 300 650; o2=$(off)
+      if [ -n "$o2" ] && [ "$o2" -lt "$o1" ]; then note "One page, drag back: the page before came back ($o1 -> $o2)"
+      else fail "One page, drag back: the page before did not come back ($o1 -> ${o2:-unknown})"; fi
+    else warn "One page drags: the forward drag didn't turn the page ($o0 -> $o1), so the drag back wasn't checked"; fi
     # 4. Widened again
     back=$(layout)
     clear_layout; timeout 20 adb shell am task resize "$id" 0 0 1400 1568; sleep 2

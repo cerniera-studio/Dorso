@@ -119,6 +119,13 @@ class ReaderView(c: Context) : View(c) {
     // ---- Turning: the leaf between spread [leafA] and the one after it, held by the hand
     private val leaf = Leaf().apply { dpScale = c.resources.displayMetrics.density }
     private var leafA = -1
+    /** One page, going back: the page before, sliding out from behind the fold (-1 when not). */
+    private var slipA = -1
+    /** How far its fore-edge has come onto the page, px from the left edge. */
+    private var slipX = 0f
+    private var slipAnim: ValueAnimator? = null
+    private var slipBmp: Bitmap? = null
+    private val shadePaint = Paint()
     /** Which side the leaf started on: 1 the recto (turning forward), -1 the verso (turning back). */
     private var sigma = 1
     private var leafAnim: ValueAnimator? = null
@@ -413,6 +420,7 @@ class ReaderView(c: Context) : View(c) {
         if (!closed) { c.drawPaint(grain()); drawEdges(c) }
         drawSpine(c)
         when {
+            slipA >= 0 -> drawSlip(c)
             leafA >= 0 -> drawTurn(c)
             closed -> drawJacket(c, style())
             else -> drawSpread(c, spread, 0f)
@@ -568,7 +576,7 @@ class ReaderView(c: Context) : View(c) {
 
     private fun drawEar(c: Canvas, page: Int, side: Int) {
         val k = corner(side)
-        val live = folding && cornerSide == side && pageOnSide(side) == page && leafA < 0
+        val live = folding && cornerSide == side && pageOnSide(side) == page && leafA < 0 && slipA < 0
         if (live) {
             DogEar.crease(foldU, foldW, maxAlong(side), maxDown(side))?.let { DogEar.draw(c, k[0], k[1], k[2], it[0], it[1], dp) }
             return
@@ -579,7 +587,7 @@ class ReaderView(c: Context) : View(c) {
 
     /** The side whose top outer corner is under (x, y), within a finger's reach. */
     private fun cornerAt(x: Float, y: Float): Int {
-        if (closed || leafA >= 0) return -1
+        if (closed || leafA >= 0 || slipA >= 0) return -1
         val reach = 56f * dp
         for (side in 0..1) {
             val page = pageOnSide(side) ?: continue
@@ -594,7 +602,7 @@ class ReaderView(c: Context) : View(c) {
 
     /** A tap on a folded corner unfolds it. */
     private fun tapOnEar(x: Float, y: Float): Boolean {
-        if (closed || leafA >= 0) return false
+        if (closed || leafA >= 0 || slipA >= 0) return false
         for (side in 0..1) {
             val page = pageOnSide(side) ?: continue
             val m = markOn(page) ?: continue
@@ -670,15 +678,13 @@ class ReaderView(c: Context) : View(c) {
         val quick = concentrato()
         val ms = if (quick) 300L else 720L
         if (mode == Mode.SINGLE && dir < 0) {
-            // One page: the page before went over the left edge, so it comes back the same way, the
-            // same curl played backwards: from past the edge, lower corner leading
-            beginLeaf(target, 1)
-            leaf.take(leaf.len, leaf.breadth * .8f)
-            leaf.hold(-leaf.grabU, leaf.grabV)
+            // One page is a magazine folded back on itself: the page before is behind it, and comes
+            // round the fold (the left edge) and out over this one, its print towards you
+            beginSlip(target)
             spread = target
             moved()
             paper?.turn(quick)
-            sweep(leaf.grabU, leaf.grabV, arc = leaf.breadth * .09f, ms = ms, landed = true)
+            slide(width.toFloat(), ms, landed = true)
             return true
         }
         beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
@@ -763,6 +769,58 @@ class ReaderView(c: Context) : View(c) {
         leaf.shaders()
     }
 
+    // ---- One page, going back: the page before, from behind the fold
+
+    /** Prints page [a] as it lies on the screen, to be drawn out from behind the left edge. */
+    private fun beginSlip(a: Int) {
+        slipA = a; slipX = 0f
+        val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
+        val b = slipBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(b).apply { drawColor(Kit.GROUND); drawPaint(grain()); pageAt(a, 0)?.let { drawPage(this, it, textRects[0], 0) } }
+        slipBmp = b
+    }
+
+    /**
+     * The page before coming round the fold: its fore-edge leads in from the left edge, the rest of
+     * it still behind; where it turns round the fold it falls into shadow, and it casts a soft one
+     * on the page it is laying itself over.
+     */
+    private fun drawSlip(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        val x = slipX.coerceIn(0f, w)
+        pageAt(slipA + 1, 0)?.let { drawPage(c, it, textRects[0], 0) }
+        if (x <= 0f) return
+        val sh = 22f * dp
+        shadePaint.shader = LinearGradient(x, 0f, x + sh, 0f, withAlpha(0x000000, if (Kit.dark) .45f else .16f), 0, Shader.TileMode.CLAMP)
+        c.drawRect(x, 0f, min(w, x + sh), h, shadePaint)
+        slipBmp?.let { b -> c.save(); c.clipRect(0f, 0f, x, h); c.drawBitmap(b, x - w, 0f, null); c.restore() }
+        val wrap = min(x, 16f * dp)
+        shadePaint.shader = LinearGradient(0f, 0f, wrap, 0f, withAlpha(0x000000, if (Kit.dark) .5f else .2f), 0, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, wrap, h, shadePaint)
+        shadePaint.shader = null
+        shadePaint.color = if (Kit.dark) withAlpha(0xF3ECDD, .28f) else withAlpha(0x000000, .10f)
+        c.drawRect(x - .9f * dp, 0f, x, h, shadePaint)
+    }
+
+    /** Carries the fore-edge to [to] (the right edge: laid down; 0: back behind the fold). */
+    private fun slide(to: Float, ms: Long, landed: Boolean) {
+        slipAnim?.run { removeAllListeners(); cancel() }
+        val from = slipX
+        slipAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ms
+            interpolator = if (from == 0f) Kit.ease else android.view.animation.DecelerateInterpolator(1.6f)
+            addUpdateListener { slipX = from + (to - from) * (it.animatedValue as Float); invalidate() }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(an: Animator) {
+                    slipA = -1; slipAnim = null
+                    invalidate()
+                    if (landed) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+            })
+            start()
+        }
+    }
+
     private fun pageAt(s: Int, side: Int): Int? = spreads.getOrNull(s)?.get(side)?.takeIf { it >= 0 }
 
     private fun drawTurn(c: Canvas) {
@@ -811,6 +869,8 @@ class ReaderView(c: Context) : View(c) {
     private fun settleNow() {
         leafAnim?.run { removeAllListeners(); cancel() }
         leafAnim = null; leafA = -1; fromJacket = false
+        slipAnim?.run { removeAllListeners(); cancel() }
+        slipAnim = null; slipA = -1
         spring.stop(); leaf.speed = 0f
     }
 
@@ -914,7 +974,7 @@ class ReaderView(c: Context) : View(c) {
     private val slop = ViewConfiguration.get(c).scaledTouchSlop
     private var downX = 0f; private var downY = 0f
     private var dragging = false
-    /** One page, going back: the page before is being drawn back in over the left edge. */
+    /** One page, going back: the page before is being drawn out from behind the fold. */
     private var pulling = false
     private var velocity: VelocityTracker? = null
 
@@ -950,25 +1010,26 @@ class ReaderView(c: Context) : View(c) {
         settleNow()
         pulling = mode == Mode.SINGLE && dir < 0
         if (pulling) {
-            // The page before went over the left edge: it comes back the way it went, its fold
-            // following the finger in from the edge (the same curl as going forward, backwards)
-            beginLeaf(target, 1)
-            leaf.take(leaf.len, frameV(downX, downY))
-        } else {
-            beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
-            leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
+            // The page before is behind the fold: draw it out round the left edge, its fore-edge
+            // where the finger has carried it
+            beginSlip(target)
+            dragging = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            follow(e)
+            return true
         }
+        beginLeaf(min(spread, target), if (dir > 0) 1 else -1)
+        leaf.take(max(frameU(downX, downY), leaf.len * .3f), frameV(downX, downY))
         dragging = true
         parent?.requestDisallowInterceptTouchEvent(true)
-        spring.start(if (pulling) -leaf.grabU else leaf.handU, leaf.handV)
+        spring.start(leaf.handU, leaf.handV)
         follow(e)
         return true
     }
 
     private fun follow(e: MotionEvent) {
-        // Drawing a page back in, the fold sits as far in from the edge as the finger has travelled
-        val u = if (pulling) -leaf.grabU + 2 * max(0f, frameU(e.x, e.y) - frameU(downX, downY)) else frameU(e.x, e.y)
-        spring.aim(u, frameV(e.x, e.y), Rate.HAND)
+        if (pulling) { slipX = (e.x - downX).coerceIn(0f, width.toFloat()); invalidate(); return }
+        spring.aim(frameU(e.x, e.y), frameV(e.x, e.y), Rate.HAND)
     }
 
     /**
@@ -1027,6 +1088,19 @@ class ReaderView(c: Context) : View(c) {
 
     private fun release() {
         dragging = false
+        if (pulling) {
+            // Drawn a quarter of the way out, or flicked out, it comes; else it slips back behind
+            pulling = false
+            velocity?.computeCurrentVelocity(1000)
+            val vx = velocity?.xVelocity?.takeIf { kotlin.math.abs(it) > 1f } ?: trailSpeed()
+            val fast = 380f * dp
+            val w = width.toFloat()
+            val come = when { vx > fast -> true; vx < -fast -> false; else -> slipX > w * .25f }
+            if (come) { val quick = concentrato(); spread = slipA; moved(); paper?.turn(quick) }
+            val rest = if (come) 1f - slipX / w else slipX / w
+            slide(if (come) w else 0f, (180 + 380 * rest).toLong(), landed = come)
+            return
+        }
         val vt = velocity
         vt?.computeCurrentVelocity(1000)
         val tracked = vt?.let { if (across) it.xVelocity else it.yVelocity } ?: 0f
@@ -1034,9 +1108,7 @@ class ReaderView(c: Context) : View(c) {
         val fast = 380f * dp
         // Carried towards the spine and past it, or flicked that way, it goes over; else it settles back
         // On one page the spine is the screen's edge, out of reach: past the middle is far enough
-        // Drawing a page back in, a quarter of the way is enough to bring it back
-        val halfway = when { mode != Mode.SINGLE -> .5f; pulling -> .75f; else -> .3f }
-        pulling = false
+        val halfway = if (mode != Mode.SINGLE) .5f else .3f
         // Judge by where the finger let go, not where the sheet has reached: it trails the hand by
         // a little, and a quick flick lets go before it catches up
         val reached = ((leaf.grabU - spring.tu) / (2 * leaf.grabU)).coerceIn(0f, 1f)

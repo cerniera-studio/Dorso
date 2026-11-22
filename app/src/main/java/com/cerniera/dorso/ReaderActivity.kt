@@ -220,6 +220,7 @@ class ReaderActivity : Activity() {
         if (!::reader.isInitialized) return
         article?.let { it.offset = reader.currentOffset(); Store.put(this, it) }
         Nightstand.refresh(this)
+        ReadingProvider.changed(this)
     }
 
     companion object {

@@ -91,6 +91,8 @@ class MainActivity : Activity() {
             return
         }
         Nightstand.seatFrom(this, i)
+        // Momento's note in Fold Widgets ("Carry on · …"): open that read at your page
+        i.getStringExtra("read")?.let { id -> i.removeExtra("read"); if (Store.get(this, id) != null) { ReaderActivity.open(this, id); return } }
         // For the emulator walk: draw the nightstand at each of a matrix of sizes (dp) in several
         // finishes over a wallpaper-like ground, into files/nightstand-<finish>-<w>x<h>.png
         i.getStringExtra("nightstand")?.let { spec ->

@@ -62,7 +62,7 @@ class ReaderActivity : Activity() {
             tapTurns = prefs().getBoolean("tapTurns", false)
             onMoved = { off, p -> article?.let { it.offset = off; it.progress = p; Store.put(this@ReaderActivity, it) } }
             onTopEdge = { showTrim(true) }
-            onSpine = { finish() }
+            onSpine = { shelf() }
             onMiddle = { showTrim(trim.visibility != View.VISIBLE) }
             onMarks = { article?.let { Store.put(this@ReaderActivity, it) } }
             onCover = { article?.let { Store.put(this@ReaderActivity, it) } }
@@ -89,7 +89,7 @@ class ReaderActivity : Activity() {
                 prefs().edit().putBoolean("tapTurns", reader.tapTurns).apply()
                 (tapped as TextView).text = if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off"
             })
-            addView(button("Shelf") { finish() })
+            addView(button("Shelf") { shelf() })
         }
         val root = FrameLayout(this)
         root.addView(reader, FrameLayout.LayoutParams(-1, -1))
@@ -222,6 +222,21 @@ class ReaderActivity : Activity() {
         Nightstand.refresh(this)
         ReadingProvider.changed(this)
     }
+
+    /**
+     * Back to the shelf. A book opened from the widget (or from Fold Widgets) starts a task of its
+     * own with nothing beneath it, so finishing alone dropped you on the home screen: bring the
+     * shelf up in this task (or return to the one already beneath), then close the book.
+     */
+    private fun shelf() {
+        startActivity(Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        finish()
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+    }
+
+    @Deprecated("Back closes the book onto the shelf")
+    override fun onBackPressed() { shelf() }
 
     companion object {
         const val EXTRA_ID = "id"

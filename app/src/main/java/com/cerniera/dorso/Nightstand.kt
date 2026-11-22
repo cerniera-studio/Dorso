@@ -266,7 +266,7 @@ class Nightstand : AppWidgetProvider() {
             }
 
             // Too small for a book beside its words: the jacket full bleed, the time left on a band
-            if (min(w, h) < 125f || (w < 150f && h < 200f)) { cover(c, cv, w, h, d, radius, k, a, surface); return bmp }
+            if (min(w, h) < 90f || (w < 150f && h < 200f)) { cover(c, cv, w, h, d, radius, k, a, surface); return bmp }
 
             surface.paint(cv)
             val label = if (a.progress >= .01f) "Reading" else "Up next"
@@ -276,7 +276,9 @@ class Nightstand : AppWidgetProvider() {
             val metaBase = lineY - Grammar.LINE * k / 2 - 8f * k          // the meta line sits just above the progress line
             val footTop = metaBase - Grammar.cap(mp) - Grammar.GAP * k   // where the words above it must end
             val ASPECT = .64f
-            when (Grammar.shape(w, h)) {
+            // A square under 220 dp is too small for the title across the foot: it takes the row's arrangement
+            val shape = Grammar.shape(w, h).let { if (it == Grammar.Shape.SQUARE && min(w, h) < 220f) Grammar.Shape.ROW else it }
+            when (shape) {
                 Grammar.Shape.COLUMN -> {
                     val colW = w - 2 * pad
                     val top = Grammar.eyebrow(c, cv, surface, label, pad, pad, colW, k)
@@ -288,7 +290,7 @@ class Nightstand : AppWidgetProvider() {
                     val maxBh = footTop - top - Grammar.GAP * k - minTitle.height - Grammar.GAP * k
                     if (bh > maxBh) { bh = maxBh; bw = bh * ASPECT }
                     val room = footTop - (top + bh + Grammar.GAP * k * 1.4f)
-                    val t = Grammar.title(c, a.title, surface.ink(w / 2, h * .8f), colW, room, k, 4, largest = 24f)
+                    val t = Grammar.title(c, a.title, surface.ink(w / 2, h * .8f), colW, room, k, 4, largest = 32f)
                     // Whatever is still left is shared: above the book and between book and title
                     val spare = (room - t.height).coerceAtLeast(0f)
                     val bookTop = top + spare / 2

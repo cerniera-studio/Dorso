@@ -136,6 +136,14 @@ else
       head -c 4 shot-win-swing-$f.png | grep -q PNG && got=$((got+1))
     done
     if [ $got -eq 7 ]; then note "One page, back swing: seven frames drawn"; else fail "One page, back swing: $got of 7 frames drawn"; fi
+    # TEMP: the frames as one strip, in the log
+    pip install -q pillow >/dev/null 2>&1 && python3 -c "
+from PIL import Image; import base64, io
+ims=[Image.open(f'shot-win-swing-{f}.png').convert('RGB') for f in (8,20,35,50,65,80,92)]
+w,h=ims[0].size; s=Image.new('RGB',(w*7//3,h//3))
+for i,im in enumerate(ims): s.paste(im.resize((w//3,h//3)),(i*w//3,0))
+b=io.BytesIO(); s.save(b,'JPEG',quality=80); print('STRIP', base64.b64encode(b.getvalue()).decode())
+" || true
     # 4. Widened again
     back=$(layout)
     clear_layout; timeout 20 adb shell am task resize "$id" 0 0 1400 1568; sleep 2

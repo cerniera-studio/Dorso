@@ -42,6 +42,8 @@ class MainActivity : Activity() {
         super.onCreate(saved)
         if (Crash.show(this, "Dorso")) return
         Kit.follow(this)
+        // For the emulator walks: the first-time guide would sit over the page they turn
+        if (intent?.getBooleanExtra("noguide", false) == true) getSharedPreferences("dorso", MODE_PRIVATE).edit().putBoolean("guided", true).commit()
         window.statusBarColor = Kit.GROUND; window.navigationBarColor = Kit.GROUND
         window.decorView.setBackgroundColor(Kit.GROUND)
 

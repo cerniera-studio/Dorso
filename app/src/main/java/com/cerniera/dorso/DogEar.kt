@@ -50,7 +50,7 @@ internal object DogEar {
         val t = tip(along, down)
         fun x(u: Float) = cx + inward * u
         // The corner, gone: the page beneath, in the flap's shadow
-        val beneath = if (Kit.dark) blend(Kit.GROUND, Color.BLACK, .35f) else blend(Kit.GROUND, Color.BLACK, .07f)
+        val beneath = if (Kit.dark) blend(Stock.GROUND, Color.BLACK, .35f) else blend(Stock.GROUND, Color.BLACK, .07f)
         path.reset(); path.moveTo(cx, cy); path.lineTo(x(along), cy); path.lineTo(cx, cy + down); path.close()
         p.shader = null; p.style = Paint.Style.FILL; p.color = beneath
         c.drawPath(path, p)
@@ -60,15 +60,15 @@ internal object DogEar {
         c.drawPath(path, p)
         // The flap: the page's back, palest at the crease
         path.reset(); path.moveTo(x(along), cy); path.lineTo(x(t[0]), cy + t[1]); path.lineTo(cx, cy + down); path.close()
-        val paper = if (Kit.dark) blend(Kit.GROUND, Kit.INK, .10f) else blend(Kit.GROUND, Color.WHITE, .25f)
-        val tipShade = if (Kit.dark) blend(Kit.GROUND, Kit.INK, .05f) else blend(Kit.GROUND, Color.BLACK, .05f)
+        val paper = if (Kit.dark) blend(Stock.GROUND, Stock.INK, .10f) else blend(Stock.GROUND, Color.WHITE, .25f)
+        val tipShade = if (Kit.dark) blend(Stock.GROUND, Stock.INK, .05f) else blend(Stock.GROUND, Color.BLACK, .05f)
         val mx = x(along / 2); val my = cy + down / 2
         p.shader = LinearGradient(mx, my, x(t[0]), cy + t[1], paper, tipShade, Shader.TileMode.CLAMP)
         c.drawPath(path, p)
         p.shader = null
         // The crease
         p.style = Paint.Style.STROKE; p.strokeWidth = .8f * dp
-        p.color = withAlpha(Kit.INK and 0xFFFFFF, if (Kit.dark) .18f else .14f)
+        p.color = withAlpha(Stock.INK and 0xFFFFFF, if (Kit.dark) .18f else .14f)
         c.drawLine(x(along), cy, cx, cy + down, p)
         p.style = Paint.Style.FILL
     }

@@ -18,12 +18,15 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowLayoutInfo
 import com.cerniera.kit.Card
+import com.cerniera.kit.ChoiceList
+import com.cerniera.kit.eyebrow
 import com.cerniera.kit.Crash
 import com.cerniera.kit.Kit
 import com.cerniera.kit.pressable
 import com.cerniera.kit.px
 import com.cerniera.kit.Row
 import com.cerniera.kit.Sheet
+import com.cerniera.kit.Toggle
 import com.cerniera.kit.rounded
 import com.cerniera.kit.text
 import com.cerniera.kit.withAlpha
@@ -32,12 +35,18 @@ import com.cerniera.kit.withAlpha
  * The reader: the spread full screen, the bars out of the way (a swipe from the edge brings them
  * back), the crease read from Jetpack WindowManager and the camera hole from the display cut-out.
  *
- * Giulietta's trim: touch the top edge and a slim bar rises with smaller, larger, sound and the shelf,
- * then sinks after 3.2 s untouched.
+ * Giulietta's trim: pull the ribbon at the head of the spine (or tap it, or the top edge) and a slim
+ * bar comes down with type size, paper, marks, settings and the shelf, then rises after 3.2 s untouched.
  */
 class ReaderActivity : Activity() {
     private lateinit var reader: ReaderView
-    private lateinit var trim: LinearLayout
+    private lateinit var trim: android.widget.HorizontalScrollView
+    private lateinit var trimRow: LinearLayout
+    /** The selection's bar: look it up, search it, mark it, copy it. */
+    private lateinit var bar: LinearLayout
+    private lateinit var root: FrameLayout
+    /** The ribbon marker at the head of the spine: pull it, or tap it, for the trim. */
+    private lateinit var ribbon: Ribbon
     private var article: Article? = null
     private var tracker: WindowInfoTrackerCallbackAdapter? = null
     private val onLayout = androidx.core.util.Consumer<WindowLayoutInfo> { info -> posture(info) }
@@ -46,7 +55,7 @@ class ReaderActivity : Activity() {
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
         if (Crash.show(this, "Dorso")) return
-        Kit.follow(this)
+        Stock.load(this); Stock.apply(this)
         window.setDecorFitsSystemWindows(false)
         window.statusBarColor = 0; window.navigationBarColor = 0
         val id = intent.getStringExtra(EXTRA_ID)
@@ -65,35 +74,53 @@ class ReaderActivity : Activity() {
             onSpine = { shelf() }
             onMiddle = { showTrim(trim.visibility != View.VISIBLE) }
             onMarks = { article?.let { Store.put(this@ReaderActivity, it) } }
+            onNotes = { article?.let { Store.put(this@ReaderActivity, it) } }
+            onSelection = { sel -> showBar(sel) }
+            onShape = { placeRibbon() }
             onCover = { article?.let { Store.put(this@ReaderActivity, it) } }
             onShutTap = { hint() }
         }
-        trim = LinearLayout(this).apply {
+        trimRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = rounded(Kit.RAISED, px(22).toFloat(), Kit.HAIRLINE, px(1))
             setPadding(px(6), px(4), px(6), px(4))
-            visibility = View.GONE
-            elevation = px(6).toFloat()
             addView(button("A−") { size(-1) })
             addView(button("A+") { size(1) })
-            addView(button(if (paper.on) "Sound" else "Silent") { tapped ->
-                paper.on = !paper.on
-                prefs().edit().putBoolean("sound", paper.on).apply()
-                (tapped as android.widget.TextView).text = if (paper.on) "Sound" else "Silent"
-                if (paper.on) paper.turn(false)
-            })
+            addView(button("Paper") { showPaper() })
             addView(button("Marks") { showMarks() })
-            addView(button(if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off") { tapped ->
-                reader.tapTurns = !reader.tapTurns
-                prefs().edit().putBoolean("tapTurns", reader.tapTurns).apply()
-                (tapped as TextView).text = if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off"
-            })
+            addView(button("Settings") { showSettings() })
             addView(button("Shelf") { shelf() })
+        }
+        // In a narrow window the trim scrolls sideways rather than losing its ends
+        trim = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false; setPadding(px(10), px(8), px(10), px(12))
+            visibility = View.GONE
+            addView(trimRow)
+        }
+        trimRow.elevation = px(6).toFloat()
+        bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(px(4), px(2), px(4), px(2))
+            elevation = px(8).toFloat()
+            visibility = View.GONE
         }
         val root = FrameLayout(this)
         root.addView(reader, FrameLayout.LayoutParams(-1, -1))
-        root.addView(trim, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = px(14) })
+        ribbon = Ribbon(this, resources.displayMetrics.density).apply {
+            contentDescription = "Reading tools"
+            visibility = View.GONE
+            onTap = { showTrim(trim.visibility != View.VISIBLE || trim.alpha < 1f) }
+            onPull = { k -> pullTrim(k) }
+            onLet = { open -> showTrim(open) }
+        }
+        // The ribbon beneath the trim: when the trim comes down it lies over the ribbon's head
+        root.addView(ribbon, FrameLayout.LayoutParams(px(60), px(70), Gravity.TOP or Gravity.START))
+        root.addView(trim, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = px(6) })
+        root.addView(bar, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
+        this.root = root
         shutHint = text("UNFOLD TO READ  ·  SWIPE FOR ANOTHER COVER", 10.5f, Kit.Fixed.IVORY, 500).apply {
             letterSpacing = .2f; gravity = Gravity.CENTER
             setPadding(px(16), px(9), px(16), px(9))
@@ -104,7 +131,7 @@ class ReaderActivity : Activity() {
         root.setOnApplyWindowInsetsListener { _, insets ->
             val cut = insets.displayCutout?.boundingRects.orEmpty()
             reader.setCutouts(cut.map { Rect(it) })
-            (trim.layoutParams as FrameLayout.LayoutParams).topMargin = px(14) + (insets.displayCutout?.safeInsetTop ?: 0)
+            (trim.layoutParams as FrameLayout.LayoutParams).topMargin = px(6) + (insets.displayCutout?.safeInsetTop ?: 0)
             insets
         }
         setContentView(root)
@@ -147,21 +174,168 @@ class ReaderActivity : Activity() {
     private fun showMarks() {
         val a = article ?: return
         Sheet.show(this, "Marks") { sh ->
-            if (a.marks.isEmpty()) {
-                sh.body.addView(text("No folded pages yet. Take a page's top corner and fold it down to mark it; tap the fold to smooth it out.", 14.5f, Kit.MUTED).apply { setLineSpacing(0f, 1.3f) })
+            if (a.marks.isEmpty() && a.notes.isEmpty()) {
+                sh.body.addView(text("Nothing marked yet. Take a page's top corner and fold it down to mark the page; tap the fold to smooth it out. Press and hold a word to select it, then highlight or underline the passage.", 14.5f, Kit.MUTED).apply { setLineSpacing(0f, 1.3f) })
                 return@show
             }
-            val card = Card(this)
-            for (m in a.marks) {
-                val words = reader.wordsAt(m.offset)
-                val pct = (100 * reader.fractionAt(m.offset)).toInt()
-                card.row(Row(this, words, "$pct% of the way in", null) { sh.dismiss(); reader.goTo(m.offset) })
+            if (a.marks.isNotEmpty()) {
+                sh.body.addView(eyebrow("Folded pages"), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(8) })
+                val card = Card(this)
+                for (m in a.marks) {
+                    val words = reader.wordsAt(m.offset)
+                    val pct = (100 * reader.fractionAt(m.offset)).toInt()
+                    card.row(Row(this, words, "$pct% of the way in", null) { sh.dismiss(); reader.goTo(m.offset) })
+                }
+                sh.body.addView(card)
             }
-            sh.body.addView(card)
+            if (a.notes.isNotEmpty()) {
+                sh.body.addView(eyebrow("Highlights and underlines"), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(8); topMargin = if (a.marks.isEmpty()) 0 else px(22) })
+                val card = Card(this)
+                for (n in a.notes) {
+                    val pct = (100 * reader.fractionAt(n.start)).toInt()
+                    val kind = if (n.kind == Note.HIGHLIGHT) "Highlighted" else "Underlined"
+                    card.row(Row(this, "“" + reader.passage(n.start, n.end, 140) + "”", "$kind · $pct% of the way in", null) { sh.dismiss(); reader.goTo(n.start) })
+                }
+                sh.body.addView(card)
+            }
         }
     }
 
     private fun prefs() = getSharedPreferences("dorso", Context.MODE_PRIVATE)
+
+    // ---- Paper
+
+    /** The paper the book is printed on: night, sepia, white, or the phone's light. */
+    private fun showPaper() {
+        val tones = Stock.Tone.values()
+        val phoneDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_NO
+        Sheet.show(this, "Paper") { sh ->
+            sh.body.addView(ChoiceList(this, tones.map { t ->
+                Triple(t.title, t.detail, { c: android.graphics.Canvas, r: android.graphics.RectF -> samplePage(c, r, Stock.sample(t, phoneDark)) })
+            }, tones.indexOf(Stock.tone)) { i ->
+                Stock.save(this, tones[i])
+                setStock()
+                reader.postDelayed({ sh.dismiss() }, 320)
+            })
+        }
+    }
+
+    /** A swatch: a scrap of the page in that stock, a few lines of type and a capital. */
+    private fun samplePage(c: android.graphics.Canvas, r: android.graphics.RectF, colours: IntArray) {
+        c.drawColor(colours[0])
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = colours[1]; typeface = Kit.display(this@ReaderActivity); textSize = r.height() * .52f
+        }
+        c.drawText("Aa", r.left + r.width() * .14f, r.top + r.height() * .62f, p)
+        p.strokeWidth = px(1.5f).toFloat(); p.color = withAlpha(colours[1] and 0xFFFFFF, .42f)
+        val x0 = r.left + r.width() * .58f; val x1 = r.right - r.width() * .1f
+        for (k in 0..3) {
+            val y = r.top + r.height() * (.3f + k * .14f)
+            c.drawLine(x0, y, if (k == 3) x0 + (x1 - x0) * .55f else x1, y, p)
+        }
+    }
+
+    /** Sets the page in the chosen stock, keeping your place, and repaints the trim to match. */
+    private fun setStock() {
+        val wasDark = Kit.dark
+        Stock.apply(this)
+        article?.let { it.offset = reader.currentOffset(); reader.show(it) }
+        if (wasDark != Kit.dark) paintTrim()
+        if (::ribbon.isInitialized) ribbon.invalidate()
+    }
+
+    private fun paintTrim() {
+        trimRow.background = rounded(Kit.RAISED, px(22).toFloat(), Kit.HAIRLINE, px(1))
+        for (i in 0 until trimRow.childCount) (trimRow.getChildAt(i) as? TextView)?.setTextColor(Kit.INK)
+    }
+
+    // ---- The selection
+
+    private var selection: ReaderView.Selection? = null
+
+    /**
+     * The bar over a selection: Define (one word), Search, Highlight, Underline, Copy. Marks already
+     * on the passage are shown lit (tap to rub that one out), and Remove rubs out every mark in it.
+     */
+    private fun showBar(sel: ReaderView.Selection?) {
+        selection = sel
+        if (sel == null) {
+            if (bar.visibility == View.VISIBLE) bar.animate().alpha(0f).setDuration(Kit.QUICK).withEndAction { bar.visibility = View.GONE }.start()
+            return
+        }
+        showTrim(false)
+        bar.removeAllViews()
+        bar.background = rounded(Kit.RAISED, px(22).toFloat(), Kit.HAIRLINE, px(1))
+        fun add(label: String, on: Boolean = false, onTap: () -> Unit) = bar.addView(text(label, 14.5f, if (on) Kit.GROUND else Kit.INK, 500).apply {
+            setPadding(px(14), px(9), px(14), px(9))
+            // A mark already on the passage is shown lit; tapping it rubs it out
+            if (on) background = rounded(Stock.ACCENT, px(18).toFloat())
+            pressable()
+            setOnClickListener { onTap() }
+        }, LinearLayout.LayoutParams(-2, -2).apply { setMargins(px(2), px(2), px(2), px(2)) })
+        if (Lookup.isWord(sel.text)) add("Define") { define(sel.text); reader.clearSelection() }
+        add("Search") { search(sel.text); reader.clearSelection() }
+        add("Highlight", Note.HIGHLIGHT in sel.kinds) { reader.toggle(Note.HIGHLIGHT) }
+        add("Underline", Note.UNDERLINE in sel.kinds) { reader.toggle(Note.UNDERLINE) }
+        if (sel.kinds.isNotEmpty()) add("Remove") { reader.erase(null) }
+        add("Copy") {
+            getSystemService(android.content.ClipboardManager::class.java)
+                ?.setPrimaryClip(android.content.ClipData.newPlainText("Dorso", sel.text))
+            reader.clearSelection()
+        }
+        // Above the selection if there's room, else beneath its handles; never off the window
+        bar.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.AT_MOST), View.MeasureSpec.UNSPECIFIED)
+        val bw = bar.measuredWidth; val bh = bar.measuredHeight
+        val m = px(12).toFloat()
+        val x = (sel.box.centerX() - bw / 2f).coerceIn(m, (root.width - bw - m).coerceAtLeast(m))
+        var y = sel.box.top - bh - px(12)
+        if (y < m + px(24)) y = sel.box.bottom + px(40)
+        bar.translationX = x; bar.translationY = y.coerceAtMost(root.height - bh - m)
+        if (bar.visibility != View.VISIBLE) { bar.visibility = View.VISIBLE; bar.alpha = 0f; bar.scaleX = .96f; bar.scaleY = .96f }
+        bar.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(Kit.QUICK).setInterpolator(Kit.ease).start()
+    }
+
+    private fun search(q: String) {
+        val web = Intent(Intent.ACTION_WEB_SEARCH).putExtra(android.app.SearchManager.QUERY, q)
+        runCatching { startActivity(web) }.onFailure {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/search?q=" + android.net.Uri.encode(q)))) }
+        }
+    }
+
+    /** What a word means, on a sheet over the page, so you never leave the book; the web is one tap further. */
+    private fun define(selected: String) {
+        val word = Lookup.headword(selected)
+        Sheet.show(this, word, action = "Search" to { sh -> sh.dismiss(); search("define $word") }) { sh ->
+            val wait = text("Looking it up…", 14.5f, Kit.MUTED)
+            sh.body.addView(wait)
+            Thread {
+                val got = runCatching { Lookup.define(selected) }
+                runOnUiThread {
+                    sh.body.removeView(wait)
+                    val entry = got.getOrNull()
+                    if (entry == null) {
+                        val why = if (got.isFailure) "The dictionary couldn't be reached. Search the web for it instead?" else "No entry for “$word” in the dictionary. It may be a name, or too new; Search looks further."
+                        sh.body.addView(text(why, 14.5f, Kit.MUTED).apply { setLineSpacing(0f, 1.3f) })
+                        return@runOnUiThread
+                    }
+                    entry.phonetic?.let { sh.body.addView(text(it, 15f, Kit.MUTED), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = px(14) }) }
+                    for ((k, sense) in entry.senses.withIndex()) {
+                        sh.body.addView(eyebrow(sense.partOfSpeech), LinearLayout.LayoutParams(-1, -2).apply { topMargin = if (k == 0) 0 else px(18); bottomMargin = px(6) })
+                        for ((i, d) in sense.definitions.withIndex()) {
+                            val line = android.text.SpannableStringBuilder("${i + 1}.  ").append(d.first)
+                            d.second?.let { ex ->
+                                val s0 = line.length
+                                line.append("\n“").append(ex).append("”")
+                                line.setSpan(android.text.style.ForegroundColorSpan(Kit.MUTED), s0, line.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            }
+                            sh.body.addView(text(line, 15.5f, Kit.INK).apply { setLineSpacing(0f, 1.3f) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(8) })
+                        }
+                    }
+                    sh.body.addView(text("Wiktionary, via the Free Dictionary API", 11.5f, Kit.MUTED), LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(20) })
+                }
+            }.start()
+        }
+    }
 
     private fun button(label: String, onTap: (View) -> Unit) = text(label, 15f, Kit.INK, 500).apply {
         setPadding(px(18), px(10), px(18), px(10))
@@ -177,16 +351,70 @@ class ReaderActivity : Activity() {
 
     private fun showTrim(on: Boolean) {
         trim.removeCallbacks(hideTrim)
+        if (on && ::bar.isInitialized && reader.hasSelection) reader.clearSelection()
+        val far = -(trim.height.takeIf { it > 0 } ?: px(64)).toFloat()
         if (on) {
-            if (trim.visibility != View.VISIBLE) {
-                trim.visibility = View.VISIBLE
-                trim.alpha = 0f; trim.translationY = -px(30).toFloat()
-                trim.animate().alpha(1f).translationY(0f).setDuration(Kit.SETTLE).setInterpolator(Kit.ease).start()
-            }
+            if (trim.visibility != View.VISIBLE) { trim.visibility = View.VISIBLE; trim.alpha = 0f; trim.translationY = far }
+            trim.animate().alpha(1f).translationY(0f).setDuration(Kit.SETTLE).setInterpolator(Kit.ease).start()
+            ribbonTo(1f)
             poke()
         } else if (trim.visibility == View.VISIBLE) {
-            trim.animate().alpha(0f).translationY(-px(30).toFloat()).setDuration(Kit.QUICK).setInterpolator(Kit.ease)
+            trim.animate().alpha(0f).translationY(far).setDuration(Kit.QUICK).setInterpolator(Kit.ease)
                 .withEndAction { trim.visibility = View.GONE }.start()
+            ribbonTo(0f)
+        }
+    }
+
+    /** The ribbon pulled [k] of the way: the trim comes down with the finger. */
+    private fun pullTrim(k: Float) {
+        trim.removeCallbacks(hideTrim)
+        trim.animate().cancel()
+        if (trim.visibility != View.VISIBLE) trim.visibility = View.VISIBLE
+        val far = -(trim.height.takeIf { it > 0 } ?: px(64)).toFloat()
+        trim.translationY = far * (1f - k); trim.alpha = k
+        ribbon.drop = k
+    }
+
+    private fun ribbonTo(k: Float) {
+        if (!::ribbon.isInitialized) return
+        android.animation.ValueAnimator.ofFloat(ribbon.drop, k).apply {
+            duration = Kit.SETTLE; interpolator = Kit.ease
+            addUpdateListener { ribbon.drop = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    /** Hangs the ribbon at the head of the spine; none on the shut book. */
+    private fun placeRibbon() {
+        if (!::ribbon.isInitialized) return
+        ribbon.translationX = reader.spineX - px(60) / 2f
+        ribbon.visibility = if (reader.closed) View.GONE else View.VISIBLE
+        ribbon.invalidate()
+        if (!reader.closed) root.postDelayed({ firstGuide() }, 700)
+    }
+
+    /** The first time a book lies open: how to read, in pictures. Once only; it stays under Settings. */
+    private fun firstGuide() {
+        if (isFinishing || reader.closed || prefs().getBoolean("guided", false)) return
+        prefs().edit().putBoolean("guided", true).apply()
+        Guide.show(this)
+    }
+
+    /** What doesn't need a place on the trim: sound, tap to turn, the paper, how to read. */
+    private fun showSettings() {
+        Sheet.show(this, "Settings") { sh ->
+            val card = Card(this)
+            card.row(Row(this, "Sound of the pages", "Real page recordings; silent when the phone is", Toggle(this, paper.on) { on ->
+                paper.on = on; prefs().edit().putBoolean("sound", on).apply(); if (on) paper.turn(false)
+            }))
+            card.row(Row(this, "Tap to turn", "Tap a page's outer edge to turn it, as well as by hand", Toggle(this, reader.tapTurns) { on ->
+                reader.tapTurns = on; prefs().edit().putBoolean("tapTurns", on).apply()
+            }))
+            card.row(Row(this, "Paper", Stock.tone.title, null) { sh.dismiss(); showPaper() })
+            sh.body.addView(card)
+            val help = Card(this)
+            help.row(Row(this, "How to read", "Turning, the ribbon, selecting, marking, folding a corner", null) { sh.dismiss(); Guide.show(this) })
+            sh.body.addView(help, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(14) })
         }
     }
 
@@ -221,8 +449,17 @@ class ReaderActivity : Activity() {
         super.onConfigurationChanged(c)
         if (!::reader.isInitialized) return
         val wasDark = Kit.dark
-        Kit.follow(this)
-        if (wasDark != Kit.dark) article?.let { it.offset = reader.currentOffset(); reader.show(it) }
+        Stock.apply(this)
+        if (wasDark != Kit.dark) { article?.let { it.offset = reader.currentOffset(); reader.show(it) }; paintTrim() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::reader.isInitialized) return
+        // Another screen may have set the phone's light meanwhile: put the stock's back
+        val wasDark = Kit.dark
+        Stock.apply(this)
+        if (wasDark != Kit.dark) { article?.let { it.offset = reader.currentOffset(); reader.show(it) }; paintTrim() }
     }
 
     override fun onPause() {
@@ -239,6 +476,7 @@ class ReaderActivity : Activity() {
      * shelf up in this task (or return to the one already beneath), then close the book.
      */
     private fun shelf() {
+        Kit.follow(this)       // the shelf is in the phone's light, whatever the paper
         startActivity(Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         finish()

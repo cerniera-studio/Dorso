@@ -163,6 +163,24 @@ class ReaderView(c: Context) : View(c) {
     /** Called when the shut book is tapped: unfold to read. */
     var onShutTap: (() -> Unit)? = null
     private var lastTurnAt = 0L
+
+    // ---- Selecting, and marking passages as you would a printed copy
+    /** What is selected, for the activity's bar: the range, its words, where it sits on screen, and the note it is, if one. */
+    class Selection(val start: Int, val end: Int, val text: String, val box: RectF, val kinds: Set<Int>)
+    /** Called with the selection when it settles, and with null when it goes (or while a handle is held). */
+    var onSelection: ((Selection?) -> Unit)? = null
+    /** Called when a passage is marked or unmarked, to save the read. */
+    var onNotes: (() -> Unit)? = null
+    private var plain = ""
+    private var selStart = -1; private var selEnd = -1
+    /** Where the finger took hold of a handle, relative to the handle's line. */
+    private var grabDx = 0f; private var grabDy = 0f
+    /** What the finger holds: 0 nothing, 1 the start handle, 2 the end handle, 3 a long press growing word by word. */
+    private var grip = 0
+    private var anchorS = 0; private var anchorE = 0
+    private val markPath = android.graphics.Path()
+    private val ink = Paint(Paint.ANTI_ALIAS_FLAG)
+    val hasSelection get() = selStart in 0 until selEnd
     private var chromeAlpha = 1f
     private var chromeAnim: ValueAnimator? = null
     private val restoreChrome = Runnable { fadeChrome(1f, Kit.SETTLE) }
@@ -185,11 +203,11 @@ class ReaderView(c: Context) : View(c) {
         // Sizes are set relative to the body (RelativeSizeSpan-like, via AbsoluteSizeSpan on dip), applied at layout
         var s = sb.length
         sb.append(a.title).append('\n')
-        span(TypefaceSpan(Kit.display(context)), s); span(Rel(1.85f), s); span(ForegroundColorSpan(Kit.INK), s)
+        span(TypefaceSpan(Kit.display(context)), s); span(Rel(1.85f), s); span(ForegroundColorSpan(Stock.INK), s)
         val by = listOf(a.site, a.byline).filter { it.isNotBlank() }.joinToString("  ·  ").uppercase()
         if (by.isNotEmpty()) {
             s = sb.length; sb.append(by).append('\n')
-            span(TypefaceSpan(Kit.sans(context, 500)), s); span(Rel(.62f), s); span(ForegroundColorSpan(Kit.CHAMPAGNE), s)
+            span(TypefaceSpan(Kit.sans(context, 500)), s); span(Rel(.62f), s); span(ForegroundColorSpan(Stock.ACCENT), s)
         }
         s = sb.length; sb.append('\n'); span(Rel(.9f), s)
         var indent = false
@@ -204,13 +222,13 @@ class ReaderView(c: Context) : View(c) {
                 }
                 Block.QUOTE -> {
                     s = sb.length; sb.append(b.text).append('\n')
-                    span(Margin(1.4f, 1.4f), s); span(ForegroundColorSpan(Kit.MUTED), s)
+                    span(Margin(1.4f, 1.4f), s); span(ForegroundColorSpan(Stock.MUTED), s)
                     indent = false
                 }
                 else -> if (isCaption(b.text)) {
                     // A photograph's caption, its picture left behind: set small, slanted and quiet
                     s = sb.length; sb.append(b.text).append('\n')
-                    span(Rel(.8f), s); span(Slant(), s); span(ForegroundColorSpan(Kit.MUTED), s)
+                    span(Rel(.8f), s); span(Slant(), s); span(ForegroundColorSpan(Stock.MUTED), s)
                     indent = false
                 } else if (!opened && b.text.firstOrNull()?.isLetterOrDigit() == true && b.text.length > 120) {
                     // The opening: a drop cap three lines deep, the rest of its line in small capitals
@@ -260,7 +278,7 @@ class ReaderView(c: Context) : View(c) {
         private val lines = 3
         private val lh = body * 1.42f
         private val cp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Kit.display(context); color = Kit.INK
+            typeface = Kit.display(context); color = Stock.INK
             // Italiana's capitals stand about 0.7 of the size: span two line-heights and a cap
             textSize = (2 * lh + .7f * body) / .7f
         }
@@ -272,7 +290,7 @@ class ReaderView(c: Context) : View(c) {
                                        text: CharSequence, start: Int, end: Int, first: Boolean, layout: Layout?) {
             val sp = text as? Spanned ?: return
             if (sp.getSpanStart(this) != start) return       // only on the paragraph's first line
-            cp.color = Kit.INK
+            cp.color = Stock.INK
             c.drawText(letter, x.toFloat(), baseline + 2 * lh, cp)
         }
     }
@@ -310,7 +328,7 @@ class ReaderView(c: Context) : View(c) {
         val sizePx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, SIZES[typeStep], resources.displayMetrics)
         paint.textSize = sizePx
         paint.typeface = Kit.sans(context, 400)
-        paint.color = Kit.INK
+        paint.color = Stock.INK
 
         // A crease running down the middle is the spine. One running across (the main screen turned)
         // is not: the book still lies open left and right, and pages turn left and right, as any
@@ -389,6 +407,9 @@ class ReaderView(c: Context) : View(c) {
             .setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
             .build()
         layout = lay
+        plain = body.toString()
+        // A new cut of the pages moves every word: let any selection go
+        if (hasSelection) { selStart = -1; selEnd = -1; grip = 0; level = 0; unloupe(); onSelection?.invoke(null) }
         val n = lay.lineCount
         val tops = FloatArray(n) { lay.getLineTop(it).toFloat() }
         val bottoms = FloatArray(n) { lay.getLineBottom(it).toFloat() }
@@ -411,19 +432,25 @@ class ReaderView(c: Context) : View(c) {
         jackets.clear()
         record(colW, sizePx)
         invalidate()
+        onShape?.invoke()
     }
+
+    /** Called after every new cut of the pages: a fold, a turn, a new window or type size. */
+    var onShape: (() -> Unit)? = null
+    /** Where the ribbon hangs: the head of the spine, or the middle of a single page. */
+    val spineX get() = if (mode == Mode.SIDE) split else width / 2f
 
     // ---- Drawing
 
     override fun onDraw(c: Canvas) {
-        c.drawColor(Kit.GROUND)
+        c.drawColor(Stock.GROUND)
         if (!closed) { c.drawPaint(grain()); drawEdges(c) }
         drawSpine(c)
         when {
             slipA >= 0 -> drawSlip(c)
             leafA >= 0 -> drawTurn(c)
             closed -> drawJacket(c, style())
-            else -> drawSpread(c, spread, 0f)
+            else -> { drawSpread(c, spread, 0f); drawHandles(c) }
         }
         drawProgress(c)
     }
@@ -438,11 +465,11 @@ class ReaderView(c: Context) : View(c) {
      * over the page so it reads as a surface rather than a screen. Barely there by design.
      */
     private fun grain(): Paint {
-        grainPaint?.takeIf { grainFor == Kit.INK }?.let { return it }
+        grainPaint?.takeIf { grainFor == Stock.INK }?.let { return it }
         val n = (160 * dp / 2.75f).toInt().coerceAtLeast(96)
         val px = IntArray(n * n)
         val r = kotlin.random.Random(7)
-        val ink = Kit.INK and 0xFFFFFF
+        val ink = Stock.INK and 0xFFFFFF
         for (i in px.indices) {
             val x = r.nextFloat()
             px[i] = when {
@@ -458,7 +485,7 @@ class ReaderView(c: Context) : View(c) {
             val x = r.nextFloat() * n; val y = r.nextFloat() * n; val a = r.nextFloat() * 6.28f; val l = 3f + 6f * r.nextFloat()
             fc.drawLine(x, y, x + l * kotlin.math.cos(a), y + l * kotlin.math.sin(a), fp)
         }
-        grainFor = Kit.INK
+        grainFor = Stock.INK
         return Paint().apply { shader = android.graphics.BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) }.also { grainPaint = it }
     }
 
@@ -527,6 +554,7 @@ class ReaderView(c: Context) : View(c) {
         c.save()
         c.clipRect(r.left - 2 * dp, r.top, r.right + 2 * dp, r.top + (bottom - top))
         c.translate(r.left, r.top - top)
+        drawNotes(c, lay, first, last)
         lay.draw(c)
         c.restore()
         drawEar(c, page, side)
@@ -536,7 +564,7 @@ class ReaderView(c: Context) : View(c) {
         chrome.typeface = Kit.sans(context, 500)
         chrome.textSize = 10.5f * dp * resources.configuration.fontScale
         chrome.letterSpacing = .16f
-        chrome.color = withAlpha(Kit.MUTED and 0xFFFFFF, chromeAlpha * .9f)
+        chrome.color = withAlpha(Stock.MUTED and 0xFFFFFF, chromeAlpha * .9f)
         val headText = (if (mode != Mode.SINGLE && side == 0) a.site.ifBlank { a.title } else a.title).uppercase()
         val fitted = TextUtils.ellipsize(headText, chrome, r.width(), TextUtils.TruncateAt.END).toString()
         chrome.textAlign = Paint.Align.CENTER
@@ -647,6 +675,13 @@ class ReaderView(c: Context) : View(c) {
         return if (at + 90 < t.length) s.substringBeforeLast(' ') + "…" else s
     }
 
+    /** The words of a marked passage, cut to [max] characters at a word. */
+    fun passage(start: Int, end: Int, max: Int): String {
+        val t = plain
+        val s = t.substring(start.coerceIn(0, t.length), end.coerceIn(0, t.length)).replace('\n', ' ').trim()
+        return if (s.length <= max) s else s.take(max).substringBeforeLast(' ') + "…"
+    }
+
     fun fractionAt(off: Int): Float = layout?.text?.length?.takeIf { it > 0 }?.let { off.toFloat() / it } ?: 0f
 
     /** Opens the book at [off] (a mark), as if you'd turned to it. */
@@ -661,7 +696,7 @@ class ReaderView(c: Context) : View(c) {
         val sp = spreads.getOrNull(spread) ?: return
         val shown = max(sp[0], sp[1]) + 1
         val p = shown.toFloat() / starts.size.coerceAtLeast(1)
-        line.color = withAlpha(Kit.CHAMPAGNE and 0xFFFFFF, .55f * chromeAlpha + .15f)
+        line.color = withAlpha(Stock.ACCENT and 0xFFFFFF, .55f * chromeAlpha + .15f)
         line.strokeWidth = max(1f, dp)
         val y = height - line.strokeWidth
         c.drawLine(0f, y, width * p, y, line)
@@ -672,6 +707,7 @@ class ReaderView(c: Context) : View(c) {
     /** A tap or a key: the leaf turns over by itself, lifted from its lower corner. */
     fun turn(dir: Int): Boolean {
         if (closed) { changeCover(dir); return true }
+        if (hasSelection) clearSelection()
         settleNow()
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
@@ -741,7 +777,7 @@ class ReaderView(c: Context) : View(c) {
         val w = ceil(len).toInt().coerceAtLeast(1); val h = breadth.toInt().coerceAtLeast(1)
         fun bmp(old: Bitmap?) = old?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         // A lifted sheet catches more light than the page it leaves: at night that is what shows it
-        val paperColour = if (Kit.dark) ColorUtils.blendARGB(Kit.GROUND, Kit.INK, .085f) else Kit.GROUND
+        val paperColour = if (Kit.dark) ColorUtils.blendARGB(Stock.GROUND, Stock.INK, .085f) else Stock.GROUND
         // From the screen into a leaf frame: u from the spine outwards on the recto (k = 1) or verso (k = -1) side
         fun frame(k: Float) = Matrix().apply {
             setValues(if (across) floatArrayOf(k, 0f, -k * split, 0f, 1f, 0f, 0f, 0f, 1f)
@@ -776,7 +812,7 @@ class ReaderView(c: Context) : View(c) {
         slipA = a; slipX = 0f
         val w = width.coerceAtLeast(1); val h = height.coerceAtLeast(1)
         val b = slipBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        Canvas(b).apply { drawColor(Kit.GROUND); drawPaint(grain()); pageAt(a, 0)?.let { drawPage(this, it, textRects[0], 0) } }
+        Canvas(b).apply { drawColor(Stock.GROUND); drawPaint(grain()); pageAt(a, 0)?.let { drawPage(this, it, textRects[0], 0) } }
         slipBmp = b
         swing.set(b, holdV)
     }
@@ -932,7 +968,7 @@ class ReaderView(c: Context) : View(c) {
         }
         val front = versoFront?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         versoFront = front
-        Canvas(front).apply { drawColor(Kit.GROUND); drawJacket(this, style()) }
+        Canvas(front).apply { drawColor(Stock.GROUND); drawJacket(this, style()) }
         leaf.front = front; leaf.back = inside
         leaf.shaders()
     }
@@ -980,6 +1016,358 @@ class ReaderView(c: Context) : View(c) {
         onCover?.invoke(); record(); invalidate()
     }
 
+    // ---- Selecting and marking
+
+    private fun lastLine(page: Int) = (if (page + 1 < starts.size) starts[page + 1] else (layout?.lineCount ?: 1)) - 1
+
+    /** The side of the spread under (x, y) (on one page, 0), or -1 if that side is blank. */
+    private fun sideAt(x: Float, y: Float): Int {
+        val sp = spreads.getOrNull(spread) ?: return -1
+        val s = when (mode) { Mode.SINGLE -> 0; Mode.SIDE -> if (x < split) 0 else 1; Mode.STACK -> if (y < split) 0 else 1 }
+        return if (sp[s] >= 0) s else -1
+    }
+
+    /** Whether (x, y) is on a page's printed text, give or take a finger. */
+    private fun onText(x: Float, y: Float): Boolean {
+        val side = sideAt(x, y); if (side < 0) return false
+        val lay = layout ?: return false
+        val page = spreads[spread][side]; val r = textRects[side]
+        val h = lay.getLineBottom(lastLine(page)) - lay.getLineTop(starts[page])
+        val slack = 6f * dp
+        return x in r.left - slack..r.right + slack && y in r.top - slack..r.top + h + slack
+    }
+
+    /** The character under (x, y) on the page there; above its text, its first; below, its last. */
+    private fun offsetAt(x: Float, y: Float): Int? {
+        val lay = layout ?: return null
+        val side = sideAt(x, y).takeIf { it >= 0 } ?: return null
+        val page = spreads[spread][side]
+        val r = textRects[side]
+        val first = starts[page]; val last = lastLine(page)
+        val top = lay.getLineTop(first)
+        val ly = (y - r.top + top).toInt()
+        if (ly < top) return lay.getLineStart(first)
+        if (ly >= lay.getLineBottom(last)) return lay.getLineEnd(last)
+        val line = lay.getLineForVertical(ly).coerceIn(first, last)
+        return lay.getOffsetForHorizontal(line, x - r.left)
+    }
+
+    /** The characters on show in this spread. */
+    private fun visible(): IntArray {
+        val lay = layout ?: return intArrayOf(0, 0)
+        val sp = spreads.getOrNull(spread) ?: return intArrayOf(0, 0)
+        val pages = sp.filter { it >= 0 && !(mode == Mode.SINGLE && it == sp[1]) }
+        if (pages.isEmpty()) return intArrayOf(0, 0)
+        return intArrayOf(lay.getLineStart(starts[pages.minOf { it }]), lay.getLineEnd(lastLine(pages.maxOf { it })))
+    }
+
+    /**
+     * Where character [off] sits on screen: x, its line's top, and just under its baseline. [trailing]
+     * for a selection's end, which belongs with the character before it.
+     */
+    private fun caret(off: Int, trailing: Boolean): FloatArray? {
+        val lay = layout ?: return null
+        val sp = spreads.getOrNull(spread) ?: return null
+        val line = lay.getLineForOffset(if (trailing) max(0, off - 1) else off)
+        val page = Pager.pageOf(starts, line)
+        val side = when (page) { sp[0] -> 0; sp[1] -> 1; else -> return null }
+        if (mode == Mode.SINGLE && side == 1) return null
+        val r = textRects[side]
+        val top = lay.getLineTop(starts[page]).toFloat()
+        val x = if (trailing && lay.getLineForOffset(off) != line) lay.getPrimaryHorizontal(lay.getLineVisibleEnd(line)) else lay.getPrimaryHorizontal(off)
+        return floatArrayOf(r.left + x, r.top + lay.getLineTop(line) - top, r.top + lay.getLineBaseline(line) - top + paint.descent())
+    }
+
+    private fun isWord(ch: Char) = ch.isLetterOrDigit() || ch == '\'' || ch == '’' || ch == '-'
+
+    /** The word around [off], as a start and end; null if it falls on space or punctuation. */
+    private fun wordAround(off: Int): IntArray? {
+        val t = plain
+        if (t.isEmpty()) return null
+        var o = off.coerceIn(0, t.length - 1)
+        if (!isWord(t[o]) && o > 0 && isWord(t[o - 1])) o--
+        if (!isWord(t[o])) return null
+        var s = o; while (s > 0 && isWord(t[s - 1])) s--
+        var e = o + 1; while (e < t.length && isWord(t[e])) e++
+        while (e > s + 1 && !t[e - 1].isLetterOrDigit()) e--
+        while (s < e - 1 && !t[s].isLetterOrDigit()) s++
+        return intArrayOf(s, e)
+    }
+
+    /** A long press on a word selects it, and while the finger stays down, drawing it on takes more, word by word. */
+    private fun beginSelect(x: Float, y: Float): Boolean {
+        if (closed || leafA >= 0 || slipA >= 0 || !onText(x, y)) return false
+        val off = offsetAt(x, y) ?: return false
+        marked(off)?.let { r -> select(r[0], r[1]); level = 0; publish(); performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); return true }
+        val w = wordAround(off) ?: return false
+        anchorS = w[0]; anchorE = w[1]
+        select(w[0], w[1]); level = 0
+        grip = 3
+        parent?.requestDisallowInterceptTouchEvent(true)
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        loupe(x, y)
+        return true
+    }
+
+    private fun select(s: Int, e: Int) {
+        val v = visible()
+        selStart = s.coerceIn(v[0], v[1]); selEnd = e.coerceIn(v[0], v[1])
+        invalidate()
+    }
+
+    /**
+     * The finger moves an end of the selection. Ends always land between words, never inside one
+     * (26 Nov 2026, Mechack: char-by-char handles were fiddly, catching half a word). A handle is
+     * moved by where the finger is relative to where it took hold, so the finger needn't cover the
+     * words it is choosing; a loupe above shows them.
+     */
+    private fun extend(x: Float, y: Float) {
+        val before = selStart to selEnd
+        when (grip) {
+            3 -> {
+                val off = offsetAt(x, y) ?: return
+                val w = wordAround(off)
+                if (off < anchorS) select(w?.get(0) ?: off, anchorE) else select(anchorS, w?.get(1) ?: off)
+                loupe(x, y)
+            }
+            1, 2 -> {
+                val tx = x + grabDx; val ty = y + grabDy
+                val off = offsetAt(tx, ty) ?: return
+                val w = wordAround(off)
+                if (grip == 1) {
+                    val st = (w?.get(0) ?: off).coerceAtMost(selEnd - 1)
+                    // Dragged past the other end: the handles swap, as they do on paper with two fingers
+                    if (off >= selEnd) { val e = w?.get(1) ?: off; select(selEnd, max(e, selEnd + 1)); grip = 2 } else select(st, selEnd)
+                } else {
+                    val en = (w?.get(1) ?: off).coerceAtLeast(selStart + 1)
+                    if (off < selStart) { val st = w?.get(0) ?: off; select(min(st, selStart - 1), selStart); grip = 1 } else select(selStart, en)
+                }
+                caret(if (grip == 1) selStart else selEnd, grip == 2)?.let { loupe(it[0], (it[1] + it[2]) / 2f) }
+            }
+        }
+        if (before != (selStart to selEnd)) performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+    }
+
+    // ---- The loupe: the words under the finger, magnified above it
+    private var magnifier: android.widget.Magnifier? = null
+    private fun loupe(x: Float, y: Float) {
+        val m = magnifier ?: runCatching {
+            android.widget.Magnifier.Builder(this)
+                .setSize((150 * dp).toInt(), (52 * dp).toInt())
+                .setCornerRadius(26 * dp)
+                .setInitialZoom(1.35f)
+                .setElevation(6 * dp)
+                .setDefaultSourceToMagnifierOffset(0, -(64 * dp).toInt())
+                .build()
+        }.getOrNull()?.also { magnifier = it } ?: return
+        m.show(x, y)
+    }
+    private fun unloupe() { magnifier?.dismiss() }
+
+    /** How far the last tap inside the selection has widened it: 0 as chosen, 1 the sentence, 2 the paragraph. */
+    private var level = 0
+
+    /** The sentence around a range: from after the last full stop before it to the next one after. */
+    private fun sentence(s: Int, e: Int): IntArray {
+        val t = plain
+        var a = s
+        while (a > 0 && t[a - 1] != '\n' && !(t[a - 1] == ' ' && a >= 2 && t[a - 2] in ".!?…”’\"\'")) a--
+        var b = max(e, s + 1).coerceAtMost(t.length)
+        while (b < t.length && t[b] != '\n' && !(t[b - 1] in ".!?…" && t[b] == ' ') && !(t[b - 1] in "”’\"\'" && b >= 2 && t[b - 2] in ".!?" && t[b] == ' ')) b++
+        return intArrayOf(a, b)
+    }
+
+    private fun paragraph(s: Int, e: Int): IntArray {
+        val t = plain
+        var a = s; while (a > 0 && t[a - 1] != '\n') a--
+        var b = e; while (b < t.length && t[b] != '\n') b++
+        return intArrayOf(a, b)
+    }
+
+    /** A tap inside the selection widens it: the word to its sentence, the sentence to its paragraph. */
+    private fun widen() {
+        val r = if (level == 0) sentence(selStart, selEnd) else paragraph(selStart, selEnd)
+        level = (level + 1).coerceAtMost(2)
+        select(r[0], r[1])
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        publish()
+    }
+
+    /** Tells the activity what is selected and where, so its bar can sit above it. */
+    private fun publish() {
+        if (!hasSelection) { onSelection?.invoke(null); return }
+        val a = caret(selStart, false); val b = caret(selEnd, true)
+        val top = a?.get(1) ?: b?.get(1) ?: 0f
+        val bottom = b?.get(2) ?: a?.get(2) ?: height.toFloat()
+        val l = min(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat()); val r = max(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat())
+        onSelection?.invoke(Selection(selStart, selEnd, plain.substring(selStart, selEnd).trim(), RectF(l, top, r, bottom), kindsOver(selStart, selEnd)))
+    }
+
+    fun clearSelection() {
+        val had = hasSelection
+        selStart = -1; selEnd = -1; grip = 0; level = 0
+        unloupe()
+        invalidate()
+        if (had) onSelection?.invoke(null)
+    }
+
+    fun noteAt(off: Int): Note? = article?.notes?.lastOrNull { off >= it.start && off < it.end }
+
+    /** All the marks over [off], as one range (a highlight and a pencil line over it read as one passage). */
+    private fun marked(off: Int): IntArray? {
+        val over = article?.notes?.filter { off >= it.start && off < it.end }.orEmpty()
+        if (over.isEmpty()) return null
+        return intArrayOf(over.minOf { it.start }, over.maxOf { it.end })
+    }
+
+    /** The kinds of mark anywhere over a range. */
+    private fun kindsOver(s: Int, e: Int): Set<Int> =
+        article?.notes?.filter { it.start < e && it.end > s }?.map { it.kind }?.toSet().orEmpty()
+
+    /**
+     * Marks the selection: a highlight or a pencil line. Marks of the same kind it overlaps or
+     * touches join it, as a second stroke of the pen would.
+     */
+    fun markSelection(kind: Int) {
+        val a = article ?: return
+        if (!hasSelection) return
+        var s = selStart; var e = selEnd
+        while (s < e && plain[s].isWhitespace()) s++
+        while (e > s && plain[e - 1].isWhitespace()) e--
+        if (e <= s) return
+        val joined = a.notes.filter { it.kind == kind && it.start <= e && it.end >= s }
+        joined.forEach { s = min(s, it.start); e = max(e, it.end) }
+        a.notes.removeAll(joined)
+        a.notes += Note(s, e, kind)
+        a.notes.sortBy { it.start }
+        clearSelection()
+        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        onNotes?.invoke()
+    }
+
+    /**
+     * Rubs out marks within the selection, as an eraser would: of one [kind], or every kind (null).
+     * A mark running past the selection keeps the parts outside it.
+     */
+    fun erase(kind: Int?) {
+        val a = article ?: return
+        if (!hasSelection) return
+        val s = selStart; val e = selEnd
+        val hit = a.notes.filter { (kind == null || it.kind == kind) && it.start < e && it.end > s }
+        if (hit.isEmpty()) return
+        a.notes.removeAll(hit)
+        for (n in hit) {
+            if (n.start < s && plain.substring(n.start, s).isNotBlank()) a.notes += Note(n.start, s, n.kind)
+            if (n.end > e && plain.substring(e, n.end).isNotBlank()) a.notes += Note(e, n.end, n.kind)
+        }
+        a.notes.sortBy { it.start }
+        clearSelection()
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        onNotes?.invoke()
+    }
+
+    /** Highlight or underline the selection, or, if it already is, rub that mark out. */
+    fun toggle(kind: Int) { if (kind in kindsOver(selStart, selEnd)) erase(kind) else markSelection(kind) }
+
+    /** The line segments a range covers, in the layout's frame: each line's left and right. */
+    private inline fun segments(lay: Layout, s: Int, e: Int, each: (line: Int, x0: Float, x1: Float) -> Unit) {
+        if (e <= s) return
+        val l0 = lay.getLineForOffset(s); val l1 = lay.getLineForOffset(e - 1)
+        for (ln in l0..l1) {
+            val a = max(s, lay.getLineStart(ln)); val b = min(e, lay.getLineVisibleEnd(ln))
+            if (b <= a) continue
+            val x0 = lay.getPrimaryHorizontal(a); val x1 = lay.getPrimaryHorizontal(b)
+            if (abs(x1 - x0) > .5f) each(ln, min(x0, x1), max(x0, x1))
+        }
+    }
+
+    /** Highlights, pencil lines and the selection on the page whose lines run [first]..[last], under its print. */
+    private fun drawNotes(c: Canvas, lay: Layout, first: Int, last: Int) {
+        val from = lay.getLineStart(first); val to = lay.getLineEnd(last)
+        val fm = paint.fontMetrics
+        article?.notes?.forEach { n ->
+            if (n.end <= from || n.start >= to) return@forEach
+            val s = max(n.start, from); val e = min(n.end, to)
+            if (n.kind == Note.HIGHLIGHT) highlight(c, lay, s, e, fm, n.start) else underline(c, lay, s, e, n.start)
+        }
+        if (hasSelection && selEnd > from && selStart < to) {
+            ink.style = Paint.Style.FILL
+            ink.color = withAlpha(Stock.ACCENT and 0xFFFFFF, if (Kit.dark) .34f else .28f)
+            segments(lay, max(selStart, from), min(selEnd, to)) { ln, x0, x1 ->
+                val base = lay.getLineBaseline(ln).toFloat()
+                c.drawRect(x0, base + fm.ascent * .92f, x1, base + fm.descent * 1.2f, ink)
+            }
+        }
+    }
+
+    /**
+     * A highlighter's stroke: a band through the x-height and capitals, its ends cut on the slant
+     * of a chisel tip, its edges a hair uneven, as a hand draws it.
+     */
+    private fun highlight(c: Canvas, lay: Layout, s: Int, e: Int, fm: Paint.FontMetrics, seed: Int) {
+        ink.style = Paint.Style.FILL; ink.color = Stock.HIGHLIGHT
+        val slant = 2.4f * dp
+        segments(lay, s, e) { ln, x0, x1 ->
+            val r = kotlin.random.Random(seed * 31 + ln)
+            val base = lay.getLineBaseline(ln).toFloat()
+            val t = base + fm.ascent * .80f + (r.nextFloat() - .5f) * .8f * dp
+            val b = base + fm.descent * 1.05f + (r.nextFloat() - .5f) * .8f * dp
+            markPath.reset()
+            markPath.moveTo(x0 - 1.5f * dp + slant, t)
+            markPath.lineTo(x1 + 1.5f * dp + slant, t + (r.nextFloat() - .5f) * .6f * dp)
+            markPath.lineTo(x1 + 1.5f * dp, b)
+            markPath.lineTo(x0 - 1.5f * dp, b + (r.nextFloat() - .5f) * .6f * dp)
+            markPath.close()
+            c.drawPath(markPath, ink)
+        }
+    }
+
+    /** A pencil line under the words: soft graphite, not quite straight, as a ruled line never is by hand. */
+    private fun underline(c: Canvas, lay: Layout, s: Int, e: Int, seed: Int) {
+        ink.style = Paint.Style.STROKE; ink.strokeWidth = 1.2f * dp; ink.strokeCap = Paint.Cap.ROUND
+        ink.strokeJoin = Paint.Join.ROUND; ink.color = Stock.PENCIL
+        segments(lay, s, e) { ln, x0, x1 ->
+            val r = kotlin.random.Random(seed * 17 + ln)
+            val y = lay.getLineBaseline(ln) + paint.textSize * .2f
+            val tilt = (r.nextFloat() - .5f) * 1.4f * dp
+            markPath.reset(); markPath.moveTo(x0, y)
+            var x = x0
+            while (x < x1) {
+                x = min(x1, x + 9f * dp)
+                markPath.lineTo(x, y + tilt * (x - x0) / max(1f, x1 - x0) + (r.nextFloat() - .5f) * .7f * dp)
+            }
+            c.drawPath(markPath, ink)
+        }
+        ink.style = Paint.Style.FILL
+    }
+
+    /** The selection's two handles: a stem from the line and a drop beneath, hanging outwards. */
+    private fun drawHandles(c: Canvas) {
+        if (!hasSelection || grip == 3) return
+        val rad = 11f * dp
+        ink.style = Paint.Style.FILL; ink.color = Stock.ACCENT; ink.strokeWidth = 1.6f * dp
+        for (i in 0..1) {
+            val h = caret(if (i == 0) selStart else selEnd, i == 1) ?: continue
+            val x = h[0]; val y = h[2]
+            c.drawLine(x, h[1] + 2f * dp, x, y, ink)
+            val dir = if (i == 0) -1f else 1f
+            c.drawCircle(x + dir * rad, y + rad, rad, ink)
+            c.drawRect(min(x, x + dir * rad), y, max(x, x + dir * rad), y + rad, ink)
+        }
+    }
+
+    /** Which handle is under (x, y): 1 the start, 2 the end, 0 neither. */
+    private fun handleAt(x: Float, y: Float): Int {
+        val rad = 11f * dp; val reach = 44f * dp
+        var best = 0; var bestD = reach
+        for (i in 0..1) {
+            val h = caret(if (i == 0) selStart else selEnd, i == 1) ?: continue
+            val d = kotlin.math.hypot(x - (h[0] + (if (i == 0) -rad else rad)), y - (h[2] + rad))
+            if (d < bestD) { bestD = d; best = i + 1 }
+        }
+        return best
+    }
+
     // ---- The hand on the leaf
 
     private val slop = ViewConfiguration.get(c).scaledTouchSlop
@@ -1018,6 +1406,7 @@ class ReaderView(c: Context) : View(c) {
         }
         val target = spread + dir
         if (target < 0 || target >= spreads.size) return false
+        if (hasSelection) clearSelection()
         settleNow()
         pulling = mode == Mode.SINGLE && dir < 0
         if (pulling) {
@@ -1169,8 +1558,20 @@ class ReaderView(c: Context) : View(c) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             val w = width.toFloat(); val h = height.toFloat()
+            // A selection showing: a tap on it brings its bar back, anywhere else lets it go
+            if (hasSelection) {
+                val off = if (onText(e.x, e.y)) offsetAt(e.x, e.y) else null
+                if (off != null && off in selStart until selEnd && level < 2) widen() else clearSelection()
+                return true
+            }
             if (tapOnEar(e.x, e.y)) return true
             if (closed) { onShutTap?.invoke(); peek(); return true }
+            // A tap on a highlighted or underlined passage takes it up, to look it up or rub it out
+            if (onText(e.x, e.y)) offsetAt(e.x, e.y)?.let { marked(it) }?.let { r ->
+                select(r[0], r[1]); level = 0; publish()
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                return true
+            }
             when {
                 e.y < h * .1f -> onTopEdge?.invoke()
                 mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
@@ -1182,13 +1583,34 @@ class ReaderView(c: Context) : View(c) {
             }
             return true
         }
+        override fun onLongPress(e: MotionEvent) {
+            if (!folding && !dragging) beginSelect(e.x, e.y)
+        }
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (grip > 0) return false
             if (abs(vx) > abs(vy) && abs(vx) > 500f * dp / 2.75f) { turn(if (vx < 0) 1 else -1); return true }
             return false
         }
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        // A handle held, or a long press still growing the selection: the finger moves its end
+        if (grip > 0 && e.actionMasked != MotionEvent.ACTION_DOWN) {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> extend(e.x, e.y)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { grip = 0; unloupe(); publish(); invalidate() }
+            }
+            return true
+        }
+        if (e.actionMasked == MotionEvent.ACTION_DOWN && hasSelection) {
+            grip = handleAt(e.x, e.y)
+            if (grip > 0) {
+                caret(if (grip == 1) selStart else selEnd, grip == 2)?.let { h -> grabDx = h[0] - e.x; grabDy = (h[1] + h[2]) / 2f - e.y }
+                parent?.requestDisallowInterceptTouchEvent(true)
+                onSelection?.invoke(null)
+                return true
+            }
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; dragging = false; folding = false; trailN = 0

@@ -26,6 +26,7 @@ import com.cerniera.kit.pressable
 import com.cerniera.kit.px
 import com.cerniera.kit.Row
 import com.cerniera.kit.Sheet
+import com.cerniera.kit.Toggle
 import com.cerniera.kit.rounded
 import com.cerniera.kit.text
 import com.cerniera.kit.withAlpha
@@ -34,8 +35,8 @@ import com.cerniera.kit.withAlpha
  * The reader: the spread full screen, the bars out of the way (a swipe from the edge brings them
  * back), the crease read from Jetpack WindowManager and the camera hole from the display cut-out.
  *
- * Giulietta's trim: touch the top edge and a slim bar rises with smaller, larger, sound and the shelf,
- * then sinks after 3.2 s untouched.
+ * Giulietta's trim: pull the ribbon at the head of the spine (or tap it, or the top edge) and a slim
+ * bar comes down with type size, paper, marks, settings and the shelf, then rises after 3.2 s untouched.
  */
 class ReaderActivity : Activity() {
     private lateinit var reader: ReaderView
@@ -44,6 +45,8 @@ class ReaderActivity : Activity() {
     /** The selection's bar: look it up, search it, mark it, copy it. */
     private lateinit var bar: LinearLayout
     private lateinit var root: FrameLayout
+    /** The ribbon marker at the head of the spine: pull it, or tap it, for the trim. */
+    private lateinit var ribbon: Ribbon
     private var article: Article? = null
     private var tracker: WindowInfoTrackerCallbackAdapter? = null
     private val onLayout = androidx.core.util.Consumer<WindowLayoutInfo> { info -> posture(info) }
@@ -73,6 +76,7 @@ class ReaderActivity : Activity() {
             onMarks = { article?.let { Store.put(this@ReaderActivity, it) } }
             onNotes = { article?.let { Store.put(this@ReaderActivity, it) } }
             onSelection = { sel -> showBar(sel) }
+            onShape = { placeRibbon() }
             onCover = { article?.let { Store.put(this@ReaderActivity, it) } }
             onShutTap = { hint() }
         }
@@ -84,18 +88,8 @@ class ReaderActivity : Activity() {
             addView(button("A−") { size(-1) })
             addView(button("A+") { size(1) })
             addView(button("Paper") { showPaper() })
-            addView(button(if (paper.on) "Sound" else "Silent") { tapped ->
-                paper.on = !paper.on
-                prefs().edit().putBoolean("sound", paper.on).apply()
-                (tapped as android.widget.TextView).text = if (paper.on) "Sound" else "Silent"
-                if (paper.on) paper.turn(false)
-            })
             addView(button("Marks") { showMarks() })
-            addView(button(if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off") { tapped ->
-                reader.tapTurns = !reader.tapTurns
-                prefs().edit().putBoolean("tapTurns", reader.tapTurns).apply()
-                (tapped as TextView).text = if (reader.tapTurns) "Tap to turn: on" else "Tap to turn: off"
-            })
+            addView(button("Settings") { showSettings() })
             addView(button("Shelf") { shelf() })
         }
         // In a narrow window the trim scrolls sideways rather than losing its ends
@@ -115,6 +109,15 @@ class ReaderActivity : Activity() {
         }
         val root = FrameLayout(this)
         root.addView(reader, FrameLayout.LayoutParams(-1, -1))
+        ribbon = Ribbon(this, resources.displayMetrics.density).apply {
+            contentDescription = "Reading tools"
+            visibility = View.GONE
+            onTap = { showTrim(trim.visibility != View.VISIBLE || trim.alpha < 1f) }
+            onPull = { k -> pullTrim(k) }
+            onLet = { open -> showTrim(open) }
+        }
+        // The ribbon beneath the trim: when the trim comes down it lies over the ribbon's head
+        root.addView(ribbon, FrameLayout.LayoutParams(px(60), px(70), Gravity.TOP or Gravity.START))
         root.addView(trim, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = px(6) })
         root.addView(bar, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
         this.root = root
@@ -238,6 +241,7 @@ class ReaderActivity : Activity() {
         Stock.apply(this)
         article?.let { it.offset = reader.currentOffset(); reader.show(it) }
         if (wasDark != Kit.dark) paintTrim()
+        if (::ribbon.isInitialized) ribbon.invalidate()
     }
 
     private fun paintTrim() {
@@ -348,16 +352,69 @@ class ReaderActivity : Activity() {
     private fun showTrim(on: Boolean) {
         trim.removeCallbacks(hideTrim)
         if (on && ::bar.isInitialized && reader.hasSelection) reader.clearSelection()
+        val far = -(trim.height.takeIf { it > 0 } ?: px(64)).toFloat()
         if (on) {
-            if (trim.visibility != View.VISIBLE) {
-                trim.visibility = View.VISIBLE
-                trim.alpha = 0f; trim.translationY = -px(30).toFloat()
-                trim.animate().alpha(1f).translationY(0f).setDuration(Kit.SETTLE).setInterpolator(Kit.ease).start()
-            }
+            if (trim.visibility != View.VISIBLE) { trim.visibility = View.VISIBLE; trim.alpha = 0f; trim.translationY = far }
+            trim.animate().alpha(1f).translationY(0f).setDuration(Kit.SETTLE).setInterpolator(Kit.ease).start()
+            ribbonTo(1f)
             poke()
         } else if (trim.visibility == View.VISIBLE) {
-            trim.animate().alpha(0f).translationY(-px(30).toFloat()).setDuration(Kit.QUICK).setInterpolator(Kit.ease)
+            trim.animate().alpha(0f).translationY(far).setDuration(Kit.QUICK).setInterpolator(Kit.ease)
                 .withEndAction { trim.visibility = View.GONE }.start()
+            ribbonTo(0f)
+        }
+    }
+
+    /** The ribbon pulled [k] of the way: the trim comes down with the finger. */
+    private fun pullTrim(k: Float) {
+        trim.removeCallbacks(hideTrim)
+        trim.animate().cancel()
+        if (trim.visibility != View.VISIBLE) trim.visibility = View.VISIBLE
+        val far = -(trim.height.takeIf { it > 0 } ?: px(64)).toFloat()
+        trim.translationY = far * (1f - k); trim.alpha = k
+        ribbon.drop = k
+    }
+
+    private fun ribbonTo(k: Float) {
+        if (!::ribbon.isInitialized) return
+        android.animation.ValueAnimator.ofFloat(ribbon.drop, k).apply {
+            duration = Kit.SETTLE; interpolator = Kit.ease
+            addUpdateListener { ribbon.drop = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    /** Hangs the ribbon at the head of the spine; none on the shut book. */
+    private fun placeRibbon() {
+        if (!::ribbon.isInitialized) return
+        ribbon.translationX = reader.spineX - px(60) / 2f
+        ribbon.visibility = if (reader.closed) View.GONE else View.VISIBLE
+        ribbon.invalidate()
+        if (!reader.closed) root.postDelayed({ firstGuide() }, 700)
+    }
+
+    /** The first time a book lies open: how to read, in pictures. Once only; it stays under Settings. */
+    private fun firstGuide() {
+        if (isFinishing || reader.closed || prefs().getBoolean("guided", false)) return
+        prefs().edit().putBoolean("guided", true).apply()
+        Guide.show(this)
+    }
+
+    /** What doesn't need a place on the trim: sound, tap to turn, the paper, how to read. */
+    private fun showSettings() {
+        Sheet.show(this, "Settings") { sh ->
+            val card = Card(this)
+            card.row(Row(this, "Sound of the pages", "Real page recordings; silent when the phone is", Toggle(this, paper.on) { on ->
+                paper.on = on; prefs().edit().putBoolean("sound", on).apply(); if (on) paper.turn(false)
+            }))
+            card.row(Row(this, "Tap to turn", "Tap a page's outer edge to turn it, as well as by hand", Toggle(this, reader.tapTurns) { on ->
+                reader.tapTurns = on; prefs().edit().putBoolean("tapTurns", on).apply()
+            }))
+            card.row(Row(this, "Paper", Stock.tone.title, null) { sh.dismiss(); showPaper() })
+            sh.body.addView(card)
+            val help = Card(this)
+            help.row(Row(this, "How to read", "Turning, the ribbon, selecting, marking, folding a corner", null) { sh.dismiss(); Guide.show(this) })
+            sh.body.addView(help, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(14) })
         }
     }
 

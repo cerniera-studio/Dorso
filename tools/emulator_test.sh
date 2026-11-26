@@ -17,7 +17,7 @@ layout() { adb shell run-as $PKG cat files/layout.json 2>/dev/null; }
 
 # The shelf, seeded with the sample read
 size 719 1680
-adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 5
+adb shell am start -W -n $PKG/.MainActivity --ez noguide true >/dev/null; sleep 5
 adb exec-out screencap -p > shot-0-shelf.png
 
 # Open the sample at character 2200 (the second section)

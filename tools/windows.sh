@@ -83,7 +83,7 @@ PY
 
 # ---- The main screen's shape, the book opened in a pop-up window, part way in
 adb shell wm density 280; adb shell wm size 1503x1568; sleep 3
-adb shell am start -W --windowingMode 5 -n $PKG/.MainActivity >/dev/null; sleep 4   # seeds the shelf
+adb shell am start -W --windowingMode 5 -n $PKG/.MainActivity --ez noguide true >/dev/null; sleep 4   # seeds the shelf
 adb shell am start -W -n $PKG/.MainActivity --es open sample --es at 2200 >/dev/null; sleep 4
 set -- $(task $PKG); id=$1; mode=$2
 echo "task: $id $mode" | tee -a $out

@@ -431,7 +431,13 @@ class ReaderView(c: Context) : View(c) {
         jackets.clear()
         record(colW, sizePx)
         invalidate()
+        onShape?.invoke()
     }
+
+    /** Called after every new cut of the pages: a fold, a turn, a new window or type size. */
+    var onShape: (() -> Unit)? = null
+    /** Where the ribbon hangs: the head of the spine, or the middle of a single page. */
+    val spineX get() = if (mode == Mode.SIDE) split else width / 2f
 
     // ---- Drawing
 

@@ -22,6 +22,8 @@ data class Article(
     val marks: MutableList<Mark> = mutableListOf(),
     /** The jacket design chosen on the cover screen; -1 until you choose (then the read's own). */
     var cover: Int = -1,
+    /** Highlighted and underlined passages, by character range in the reader's text. */
+    val notes: MutableList<Note> = mutableListOf(),
 ) {
     val words get() = blocks.sumOf { b -> b.text.split(' ').count { it.isNotBlank() } }
     val minutes get() = (words / 230).coerceAtLeast(1)
@@ -32,6 +34,15 @@ data class Article(
  * folded [along] dp along the top edge and [down] dp down the outer edge.
  */
 data class Mark(val offset: Int, val along: Float, val down: Float)
+
+/**
+ * A passage marked as you would in a printed copy: highlighted, or underlined in pencil. [start]
+ * and [end] are characters in the text the reader sets (title and byline included), as [Mark]'s
+ * offset is, so they survive any type size, fold or turn.
+ */
+data class Note(val start: Int, val end: Int, val kind: Int) {
+    companion object { const val HIGHLIGHT = 0; const val UNDERLINE = 1 }
+}
 
 /** Reads kept as one JSON file each in the app's own files. Nothing leaves the phone. */
 object Store {
@@ -53,6 +64,7 @@ object Store {
         put("id", a.id); put("url", a.url); put("title", a.title); put("byline", a.byline); put("site", a.site)
         put("savedAt", a.savedAt); put("offset", a.offset); put("progress", a.progress.toDouble()); put("openedAt", a.openedAt)
         put("cover", a.cover)
+        put("notes", JSONArray().apply { a.notes.forEach { n -> put(JSONArray().put(n.start).put(n.end).put(n.kind)) } })
         put("marks", JSONArray().apply { a.marks.forEach { m -> put(JSONArray().put(m.offset).put(m.along.toDouble()).put(m.down.toDouble())) } })
         put("blocks", JSONArray().apply { a.blocks.forEach { b -> put(JSONObject().put("k", b.kind).put("t", b.text)) } })
     }
@@ -64,6 +76,8 @@ object Store {
         return Article(o.getString("id"), o.getString("url"), o.getString("title"), o.optString("byline"), o.optString("site"),
             blocks, o.getLong("savedAt"), o.optInt("offset"), o.optDouble("progress", 0.0).toFloat(), o.optLong("openedAt"),
             o.optJSONArray("marks")?.let { m -> (0 until m.length()).map { i -> m.getJSONArray(i).let { Mark(it.getInt(0), it.getDouble(1).toFloat(), it.getDouble(2).toFloat()) } }.toMutableList() }
-                ?: mutableListOf(), o.optInt("cover", -1))
+                ?: mutableListOf(), o.optInt("cover", -1),
+            o.optJSONArray("notes")?.let { m -> (0 until m.length()).map { i -> m.getJSONArray(i).let { Note(it.getInt(0), it.getInt(1), it.getInt(2)) } }.toMutableList() }
+                ?: mutableListOf())
     }
 }

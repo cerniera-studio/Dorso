@@ -27,8 +27,8 @@ object Guide {
     private val steps = listOf(
         Step("Turn the page", "Take the page anywhere and turn it, as you would paper. Turn quickly and only the text stays.", ::turn),
         Step("Pull the ribbon", "The ribbon at the top of the spine: pull it down, or tap it, for type size, paper, marks and settings. Tapping the top of a page does the same.", ::ribbon),
-        Step("Hold a word", "Press and hold a word to select it; keep your finger down to take more. Then Define, Search, Highlight, Underline or Copy.", ::select),
-        Step("Mark a passage", "Highlights and pencil underlines stay where you put them. Tap one to change it or rub it out.", ::marks),
+        Step("Hold a word", "Press and hold a word to select it; keep your finger down to take more, word by word. Tap the selection to widen it to the sentence, tap again for the paragraph. Drag a handle from anywhere near it; a loupe shows the words.", ::select),
+        Step("Mark a passage", "Highlight or underline in pencil. Tap a marked passage: a lit Highlight or Underline rubs that mark out, Remove rubs out both. Select part of a mark to erase just that part.", ::marks),
         Step("Fold a corner", "Draw a page's top corner in and down to fold it, for want of a bookmark. Tap the fold to smooth it out.", ::corner),
         Step("Back to the shelf", "Tap the spine, or Back. Fold the phone shut and the book shows its cover; swipe the cover for another design.", ::spine),
     )

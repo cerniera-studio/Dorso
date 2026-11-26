@@ -253,7 +253,10 @@ class ReaderActivity : Activity() {
 
     private var selection: ReaderView.Selection? = null
 
-    /** The bar over a selection: Define (one word), Search, Highlight, Underline, Copy; on a marked passage, Remove. */
+    /**
+     * The bar over a selection: Define (one word), Search, Highlight, Underline, Copy. Marks already
+     * on the passage are shown lit (tap to rub that one out), and Remove rubs out every mark in it.
+     */
     private fun showBar(sel: ReaderView.Selection?) {
         selection = sel
         if (sel == null) {
@@ -263,21 +266,18 @@ class ReaderActivity : Activity() {
         showTrim(false)
         bar.removeAllViews()
         bar.background = rounded(Kit.RAISED, px(22).toFloat(), Kit.HAIRLINE, px(1))
-        fun add(label: String, onTap: () -> Unit) = bar.addView(text(label, 14.5f, Kit.INK, 500).apply {
-            setPadding(px(14), px(11), px(14), px(11))
+        fun add(label: String, on: Boolean = false, onTap: () -> Unit) = bar.addView(text(label, 14.5f, if (on) Kit.GROUND else Kit.INK, 500).apply {
+            setPadding(px(14), px(9), px(14), px(9))
+            // A mark already on the passage is shown lit; tapping it rubs it out
+            if (on) background = rounded(Stock.ACCENT, px(18).toFloat())
             pressable()
             setOnClickListener { onTap() }
-        })
+        }, LinearLayout.LayoutParams(-2, -2).apply { setMargins(px(2), px(2), px(2), px(2)) })
         if (Lookup.isWord(sel.text)) add("Define") { define(sel.text); reader.clearSelection() }
         add("Search") { search(sel.text); reader.clearSelection() }
-        val note = sel.note
-        if (note == null) {
-            add("Highlight") { reader.markSelection(Note.HIGHLIGHT) }
-            add("Underline") { reader.markSelection(Note.UNDERLINE) }
-        } else {
-            add(if (note.kind == Note.HIGHLIGHT) "Underline" else "Highlight") { reader.markSelection(if (note.kind == Note.HIGHLIGHT) Note.UNDERLINE else Note.HIGHLIGHT) }
-            add("Remove") { reader.removeNote(note) }
-        }
+        add("Highlight", Note.HIGHLIGHT in sel.kinds) { reader.toggle(Note.HIGHLIGHT) }
+        add("Underline", Note.UNDERLINE in sel.kinds) { reader.toggle(Note.UNDERLINE) }
+        if (sel.kinds.isNotEmpty()) add("Remove") { reader.erase(null) }
         add("Copy") {
             getSystemService(android.content.ClipboardManager::class.java)
                 ?.setPrimaryClip(android.content.ClipData.newPlainText("Dorso", sel.text))
@@ -289,7 +289,7 @@ class ReaderActivity : Activity() {
         val m = px(12).toFloat()
         val x = (sel.box.centerX() - bw / 2f).coerceIn(m, (root.width - bw - m).coerceAtLeast(m))
         var y = sel.box.top - bh - px(12)
-        if (y < m + px(24)) y = sel.box.bottom + px(30)
+        if (y < m + px(24)) y = sel.box.bottom + px(40)
         bar.translationX = x; bar.translationY = y.coerceAtMost(root.height - bh - m)
         if (bar.visibility != View.VISIBLE) { bar.visibility = View.VISIBLE; bar.alpha = 0f; bar.scaleX = .96f; bar.scaleY = .96f }
         bar.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(Kit.QUICK).setInterpolator(Kit.ease).start()

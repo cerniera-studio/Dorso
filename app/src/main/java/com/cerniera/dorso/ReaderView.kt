@@ -166,14 +166,15 @@ class ReaderView(c: Context) : View(c) {
 
     // ---- Selecting, and marking passages as you would a printed copy
     /** What is selected, for the activity's bar: the range, its words, where it sits on screen, and the note it is, if one. */
-    class Selection(val start: Int, val end: Int, val text: String, val box: RectF, val note: Note?)
+    class Selection(val start: Int, val end: Int, val text: String, val box: RectF, val kinds: Set<Int>)
     /** Called with the selection when it settles, and with null when it goes (or while a handle is held). */
     var onSelection: ((Selection?) -> Unit)? = null
     /** Called when a passage is marked or unmarked, to save the read. */
     var onNotes: (() -> Unit)? = null
     private var plain = ""
     private var selStart = -1; private var selEnd = -1
-    private var selNote: Note? = null
+    /** Where the finger took hold of a handle, relative to the handle's line. */
+    private var grabDx = 0f; private var grabDy = 0f
     /** What the finger holds: 0 nothing, 1 the start handle, 2 the end handle, 3 a long press growing word by word. */
     private var grip = 0
     private var anchorS = 0; private var anchorE = 0
@@ -408,7 +409,7 @@ class ReaderView(c: Context) : View(c) {
         layout = lay
         plain = body.toString()
         // A new cut of the pages moves every word: let any selection go
-        if (hasSelection) { selStart = -1; selEnd = -1; selNote = null; grip = 0; onSelection?.invoke(null) }
+        if (hasSelection) { selStart = -1; selEnd = -1; grip = 0; level = 0; unloupe(); onSelection?.invoke(null) }
         val n = lay.lineCount
         val tops = FloatArray(n) { lay.getLineTop(it).toFloat() }
         val bottoms = FloatArray(n) { lay.getLineBottom(it).toFloat() }
@@ -1097,30 +1098,99 @@ class ReaderView(c: Context) : View(c) {
     private fun beginSelect(x: Float, y: Float): Boolean {
         if (closed || leafA >= 0 || slipA >= 0 || !onText(x, y)) return false
         val off = offsetAt(x, y) ?: return false
-        noteAt(off)?.let { n -> select(n.start, n.end, n); publish(); performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); return true }
+        marked(off)?.let { r -> select(r[0], r[1]); level = 0; publish(); performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); return true }
         val w = wordAround(off) ?: return false
         anchorS = w[0]; anchorE = w[1]
-        select(w[0], w[1], null)
+        select(w[0], w[1]); level = 0
         grip = 3
         parent?.requestDisallowInterceptTouchEvent(true)
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        loupe(x, y)
         return true
     }
 
-    private fun select(s: Int, e: Int, note: Note?) {
+    private fun select(s: Int, e: Int) {
         val v = visible()
-        selStart = s.coerceIn(v[0], v[1]); selEnd = e.coerceIn(v[0], v[1]); selNote = note
+        selStart = s.coerceIn(v[0], v[1]); selEnd = e.coerceIn(v[0], v[1])
         invalidate()
     }
 
+    /**
+     * The finger moves an end of the selection. Ends always land between words, never inside one
+     * (26 Nov 2026, Mechack: char-by-char handles were fiddly, catching half a word). A handle is
+     * moved by where the finger is relative to where it took hold, so the finger needn't cover the
+     * words it is choosing; a loupe above shows them.
+     */
     private fun extend(x: Float, y: Float) {
-        val off = offsetAt(x, y) ?: return
-        selNote = null
+        val before = selStart to selEnd
         when (grip) {
-            3 -> { val w = wordAround(off); if (off < anchorS) select(w?.get(0) ?: off, anchorE, null) else select(anchorS, w?.get(1) ?: off, null) }
-            1 -> select(min(off, selEnd - 1), selEnd, null)
-            2 -> select(selStart, max(off, selStart + 1), null)
+            3 -> {
+                val off = offsetAt(x, y) ?: return
+                val w = wordAround(off)
+                if (off < anchorS) select(w?.get(0) ?: off, anchorE) else select(anchorS, w?.get(1) ?: off)
+                loupe(x, y)
+            }
+            1, 2 -> {
+                val tx = x + grabDx; val ty = y + grabDy
+                val off = offsetAt(tx, ty) ?: return
+                val w = wordAround(off)
+                if (grip == 1) {
+                    val st = (w?.get(0) ?: off).coerceAtMost(selEnd - 1)
+                    // Dragged past the other end: the handles swap, as they do on paper with two fingers
+                    if (off >= selEnd) { val e = w?.get(1) ?: off; select(selEnd, max(e, selEnd + 1)); grip = 2 } else select(st, selEnd)
+                } else {
+                    val en = (w?.get(1) ?: off).coerceAtLeast(selStart + 1)
+                    if (off < selStart) { val st = w?.get(0) ?: off; select(min(st, selStart - 1), selStart); grip = 1 } else select(selStart, en)
+                }
+                caret(if (grip == 1) selStart else selEnd, grip == 2)?.let { loupe(it[0], (it[1] + it[2]) / 2f) }
+            }
         }
+        if (before != (selStart to selEnd)) performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE)
+    }
+
+    // ---- The loupe: the words under the finger, magnified above it
+    private var magnifier: android.widget.Magnifier? = null
+    private fun loupe(x: Float, y: Float) {
+        val m = magnifier ?: runCatching {
+            android.widget.Magnifier.Builder(this)
+                .setSize((150 * dp).toInt(), (52 * dp).toInt())
+                .setCornerRadius(26 * dp)
+                .setInitialZoom(1.35f)
+                .setElevation(6 * dp)
+                .setDefaultSourceToMagnifierOffset(0, -(64 * dp).toInt())
+                .build()
+        }.getOrNull()?.also { magnifier = it } ?: return
+        m.show(x, y)
+    }
+    private fun unloupe() { magnifier?.dismiss() }
+
+    /** How far the last tap inside the selection has widened it: 0 as chosen, 1 the sentence, 2 the paragraph. */
+    private var level = 0
+
+    /** The sentence around a range: from after the last full stop before it to the next one after. */
+    private fun sentence(s: Int, e: Int): IntArray {
+        val t = plain
+        var a = s
+        while (a > 0 && t[a - 1] != '\n' && !(t[a - 1] == ' ' && a >= 2 && t[a - 2] in ".!?…”’\"\'")) a--
+        var b = max(e, s + 1).coerceAtMost(t.length)
+        while (b < t.length && t[b] != '\n' && !(t[b - 1] in ".!?…" && t[b] == ' ') && !(t[b - 1] in "”’\"\'" && b >= 2 && t[b - 2] in ".!?" && t[b] == ' ')) b++
+        return intArrayOf(a, b)
+    }
+
+    private fun paragraph(s: Int, e: Int): IntArray {
+        val t = plain
+        var a = s; while (a > 0 && t[a - 1] != '\n') a--
+        var b = e; while (b < t.length && t[b] != '\n') b++
+        return intArrayOf(a, b)
+    }
+
+    /** A tap inside the selection widens it: the word to its sentence, the sentence to its paragraph. */
+    private fun widen() {
+        val r = if (level == 0) sentence(selStart, selEnd) else paragraph(selStart, selEnd)
+        level = (level + 1).coerceAtMost(2)
+        select(r[0], r[1])
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        publish()
     }
 
     /** Tells the activity what is selected and where, so its bar can sit above it. */
@@ -1130,17 +1200,29 @@ class ReaderView(c: Context) : View(c) {
         val top = a?.get(1) ?: b?.get(1) ?: 0f
         val bottom = b?.get(2) ?: a?.get(2) ?: height.toFloat()
         val l = min(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat()); val r = max(a?.get(0) ?: 0f, b?.get(0) ?: width.toFloat())
-        onSelection?.invoke(Selection(selStart, selEnd, plain.substring(selStart, selEnd).trim(), RectF(l, top, r, bottom), selNote))
+        onSelection?.invoke(Selection(selStart, selEnd, plain.substring(selStart, selEnd).trim(), RectF(l, top, r, bottom), kindsOver(selStart, selEnd)))
     }
 
     fun clearSelection() {
         val had = hasSelection
-        selStart = -1; selEnd = -1; selNote = null; grip = 0
+        selStart = -1; selEnd = -1; grip = 0; level = 0
+        unloupe()
         invalidate()
         if (had) onSelection?.invoke(null)
     }
 
     fun noteAt(off: Int): Note? = article?.notes?.lastOrNull { off >= it.start && off < it.end }
+
+    /** All the marks over [off], as one range (a highlight and a pencil line over it read as one passage). */
+    private fun marked(off: Int): IntArray? {
+        val over = article?.notes?.filter { off >= it.start && off < it.end }.orEmpty()
+        if (over.isEmpty()) return null
+        return intArrayOf(over.minOf { it.start }, over.maxOf { it.end })
+    }
+
+    /** The kinds of mark anywhere over a range. */
+    private fun kindsOver(s: Int, e: Int): Set<Int> =
+        article?.notes?.filter { it.start < e && it.end > s }?.map { it.kind }?.toSet().orEmpty()
 
     /**
      * Marks the selection: a highlight or a pencil line. Marks of the same kind it overlaps or
@@ -1163,13 +1245,29 @@ class ReaderView(c: Context) : View(c) {
         onNotes?.invoke()
     }
 
-    /** Rubs out a mark. */
-    fun removeNote(n: Note) {
-        article?.notes?.remove(n)
+    /**
+     * Rubs out marks within the selection, as an eraser would: of one [kind], or every kind (null).
+     * A mark running past the selection keeps the parts outside it.
+     */
+    fun erase(kind: Int?) {
+        val a = article ?: return
+        if (!hasSelection) return
+        val s = selStart; val e = selEnd
+        val hit = a.notes.filter { (kind == null || it.kind == kind) && it.start < e && it.end > s }
+        if (hit.isEmpty()) return
+        a.notes.removeAll(hit)
+        for (n in hit) {
+            if (n.start < s && plain.substring(n.start, s).isNotBlank()) a.notes += Note(n.start, s, n.kind)
+            if (n.end > e && plain.substring(e, n.end).isNotBlank()) a.notes += Note(e, n.end, n.kind)
+        }
+        a.notes.sortBy { it.start }
         clearSelection()
         performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         onNotes?.invoke()
     }
+
+    /** Highlight or underline the selection, or, if it already is, rub that mark out. */
+    fun toggle(kind: Int) { if (kind in kindsOver(selStart, selEnd)) erase(kind) else markSelection(kind) }
 
     /** The line segments a range covers, in the layout's frame: each line's left and right. */
     private inline fun segments(lay: Layout, s: Int, e: Int, each: (line: Int, x0: Float, x1: Float) -> Unit) {
@@ -1246,7 +1344,7 @@ class ReaderView(c: Context) : View(c) {
     /** The selection's two handles: a stem from the line and a drop beneath, hanging outwards. */
     private fun drawHandles(c: Canvas) {
         if (!hasSelection || grip == 3) return
-        val rad = 8.5f * dp
+        val rad = 11f * dp
         ink.style = Paint.Style.FILL; ink.color = Stock.ACCENT; ink.strokeWidth = 1.6f * dp
         for (i in 0..1) {
             val h = caret(if (i == 0) selStart else selEnd, i == 1) ?: continue
@@ -1260,7 +1358,7 @@ class ReaderView(c: Context) : View(c) {
 
     /** Which handle is under (x, y): 1 the start, 2 the end, 0 neither. */
     private fun handleAt(x: Float, y: Float): Int {
-        val rad = 8.5f * dp; val reach = 30f * dp
+        val rad = 11f * dp; val reach = 44f * dp
         var best = 0; var bestD = reach
         for (i in 0..1) {
             val h = caret(if (i == 0) selStart else selEnd, i == 1) ?: continue
@@ -1463,14 +1561,14 @@ class ReaderView(c: Context) : View(c) {
             // A selection showing: a tap on it brings its bar back, anywhere else lets it go
             if (hasSelection) {
                 val off = if (onText(e.x, e.y)) offsetAt(e.x, e.y) else null
-                if (off != null && off in selStart until selEnd) publish() else clearSelection()
+                if (off != null && off in selStart until selEnd && level < 2) widen() else clearSelection()
                 return true
             }
             if (tapOnEar(e.x, e.y)) return true
             if (closed) { onShutTap?.invoke(); peek(); return true }
             // A tap on a highlighted or underlined passage takes it up, to look it up or rub it out
-            if (onText(e.x, e.y)) offsetAt(e.x, e.y)?.let { noteAt(it) }?.let { n ->
-                select(n.start, n.end, n); publish()
+            if (onText(e.x, e.y)) offsetAt(e.x, e.y)?.let { marked(it) }?.let { r ->
+                select(r[0], r[1]); level = 0; publish()
                 performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 return true
             }
@@ -1500,13 +1598,14 @@ class ReaderView(c: Context) : View(c) {
         if (grip > 0 && e.actionMasked != MotionEvent.ACTION_DOWN) {
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> extend(e.x, e.y)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { grip = 0; publish(); invalidate() }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { grip = 0; unloupe(); publish(); invalidate() }
             }
             return true
         }
         if (e.actionMasked == MotionEvent.ACTION_DOWN && hasSelection) {
             grip = handleAt(e.x, e.y)
             if (grip > 0) {
+                caret(if (grip == 1) selStart else selEnd, grip == 2)?.let { h -> grabDx = h[0] - e.x; grabDy = (h[1] + h[2]) / 2f - e.y }
                 parent?.requestDisallowInterceptTouchEvent(true)
                 onSelection?.invoke(null)
                 return true

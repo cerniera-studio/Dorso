@@ -408,6 +408,7 @@ class ReaderView(c: Context) : View(c) {
             .build()
         layout = lay
         plain = body.toString()
+        spaceAdd.clear()
         // A new cut of the pages moves every word: let any selection go
         if (hasSelection) { selStart = -1; selEnd = -1; grip = 0; level = 0; unloupe(); onSelection?.invoke(null) }
         val n = lay.lineCount
@@ -1049,7 +1050,7 @@ class ReaderView(c: Context) : View(c) {
         if (ly < top) return lay.getLineStart(first)
         if (ly >= lay.getLineBottom(last)) return lay.getLineEnd(last)
         val line = lay.getLineForVertical(ly).coerceIn(first, last)
-        return lay.getOffsetForHorizontal(line, x - r.left)
+        return offsetOnLine(lay, line, x - r.left)
     }
 
     /** The characters on show in this spread. */
@@ -1074,7 +1075,7 @@ class ReaderView(c: Context) : View(c) {
         if (mode == Mode.SINGLE && side == 1) return null
         val r = textRects[side]
         val top = lay.getLineTop(starts[page]).toFloat()
-        val x = if (trailing && lay.getLineForOffset(off) != line) lay.getPrimaryHorizontal(lay.getLineVisibleEnd(line)) else lay.getPrimaryHorizontal(off)
+        val x = if (trailing && lay.getLineForOffset(off) != line) hx(lay, lay.getLineVisibleEnd(line), line) else hx(lay, off, line)
         return floatArrayOf(r.left + x, r.top + lay.getLineTop(line) - top, r.top + lay.getLineBaseline(line) - top + paint.descent())
     }
 
@@ -1100,6 +1101,7 @@ class ReaderView(c: Context) : View(c) {
         val off = offsetAt(x, y) ?: return false
         marked(off)?.let { r -> select(r[0], r[1]); level = 0; publish(); performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); return true }
         val w = wordAround(off) ?: return false
+        probe(x, y, w)
         anchorS = w[0]; anchorE = w[1]
         select(w[0], w[1]); level = 0
         grip = 3
@@ -1107,6 +1109,17 @@ class ReaderView(c: Context) : View(c) {
         performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         loupe(x, y)
         return true
+    }
+
+    /** For the emulator walk: the word taken, and the word the layout's own measure would have taken. */
+    private fun probe(x: Float, y: Float, w: IntArray) {
+        val lay = layout ?: return
+        val side = sideAt(x, y).takeIf { it >= 0 } ?: return
+        val r = textRects[side]; val page = spreads[spread][side]
+        val line = lay.getLineForVertical((y - r.top + lay.getLineTop(starts[page])).toInt())
+        val raw = wordAround(lay.getOffsetForHorizontal(line, x - r.left))
+        android.util.Log.i("DorsoSelect", "took '" + plain.substring(w[0], w[1]) + "' (layout alone: '" +
+            (raw?.let { plain.substring(it[0], it[1]) } ?: "") + "') space added " + added(lay, line))
     }
 
     private fun select(s: Int, e: Int) {
@@ -1269,6 +1282,58 @@ class ReaderView(c: Context) : View(c) {
     /** Highlight or underline the selection, or, if it already is, rub that mark out. */
     fun toggle(kind: Int) { if (kind in kindsOver(selStart, selEnd)) erase(kind) else markSelection(kind) }
 
+    // ---- Where the words really are on a justified line
+    //
+    // 27 Nov 2026, from Mechack's recording: on justified lines the layout's own measures
+    // (getPrimaryHorizontal, getOffsetForHorizontal) left out the space the justifier adds between
+    // words, so a selection drifted left of its word by more the further right it was ("a Mas" for
+    // "Massive"), and a press on a word near the right margin took the word before it. Here each
+    // line's added space is found from how far short of the margin its last word falls, shared
+    // equally among its spaces, as the justifier shares it. Where the layout already counts it, the
+    // shortfall is nil and nothing changes.
+
+    private val spaceAdd = HashMap<Int, Float>()
+
+    /** The width added to each space of [line] by justification, if the layout's measures leave it out. */
+    private fun added(lay: Layout, line: Int): Float = spaceAdd.getOrPut(line) {
+        val t = plain
+        val ls = lay.getLineStart(line); val ve = lay.getLineVisibleEnd(line); val le = lay.getLineEnd(line)
+        // The last line of a paragraph is set ragged, never stretched
+        if (ve <= ls || le >= t.length || t[le - 1] == '\n') return@getOrPut 0f
+        var spaces = 0
+        for (i in ls until ve) if (t[i] == ' ') spaces++
+        if (spaces == 0) return@getOrPut 0f
+        var end = lay.getPrimaryHorizontal(ve)
+        if (ve == le && t[le - 1].isLetter() && t[le].isLetter()) end += lay.paint.measureText("-")
+        val gap = lay.width - end
+        if (gap < .5f * dp || gap > lay.width * .5f) 0f else gap / spaces
+    }
+
+    /** Where offset [off] sits along its line, justification included. */
+    private fun hx(lay: Layout, off: Int, line: Int = lay.getLineForOffset(off)): Float {
+        val raw = lay.getPrimaryHorizontal(off)
+        val add = added(lay, line)
+        if (add == 0f) return raw
+        val ls = lay.getLineStart(line); val stop = min(off, lay.getLineVisibleEnd(line))
+        var n = 0
+        for (i in ls until stop) if (plain[i] == ' ') n++
+        return raw + n * add
+    }
+
+    /** The offset on [line] nearest [x], justification included. */
+    private fun offsetOnLine(lay: Layout, line: Int, x: Float): Int {
+        val add = added(lay, line)
+        if (add == 0f) return lay.getOffsetForHorizontal(line, x)
+        val ls = lay.getLineStart(line); val ve = lay.getLineVisibleEnd(line)
+        var best = ls; var bestD = Float.MAX_VALUE; var n = 0
+        for (o in ls..ve) {
+            if (o > ls && plain[o - 1] == ' ') n++
+            val d = abs(lay.getPrimaryHorizontal(o) + n * add - x)
+            if (d < bestD) { bestD = d; best = o }
+        }
+        return best
+    }
+
     /** The line segments a range covers, in the layout's frame: each line's left and right. */
     private inline fun segments(lay: Layout, s: Int, e: Int, each: (line: Int, x0: Float, x1: Float) -> Unit) {
         if (e <= s) return
@@ -1276,7 +1341,7 @@ class ReaderView(c: Context) : View(c) {
         for (ln in l0..l1) {
             val a = max(s, lay.getLineStart(ln)); val b = min(e, lay.getLineVisibleEnd(ln))
             if (b <= a) continue
-            val x0 = lay.getPrimaryHorizontal(a); val x1 = lay.getPrimaryHorizontal(b)
+            val x0 = hx(lay, a, ln); val x1 = hx(lay, b, ln)
             if (abs(x1 - x0) > .5f) each(ln, min(x0, x1), max(x0, x1))
         }
     }
@@ -1371,6 +1436,7 @@ class ReaderView(c: Context) : View(c) {
     // ---- The hand on the leaf
 
     private val slop = ViewConfiguration.get(c).scaledTouchSlop
+    private val PRESS_MS = ViewConfiguration.getLongPressTimeout().coerceAtMost(400).toLong()
     private var downX = 0f; private var downY = 0f
     private var dragging = false
     /** One page, going back: the page before is being drawn out from behind the fold. */
@@ -1554,6 +1620,18 @@ class ReaderView(c: Context) : View(c) {
         }
     }
 
+    /**
+     * A press held still on a word selects it: after [PRESS_MS] (the phone's own long press, at most 0.4 s), timed here rather than by the
+     * gesture detector so the rest of that touch belongs to the selection, never to a page turn (27 Nov 2026).
+     */
+    private val press = Runnable {
+        if (!folding && !dragging && grip == 0 && beginSelect(downX, downY)) {
+            if (grip == 0) pressed = true      // a marked passage taken up whole: nothing to draw on
+            gestures.onTouchEvent(MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0))
+        }
+    }
+    private var pressed = false
+
     private val gestures = GestureDetector(c, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
@@ -1574,8 +1652,8 @@ class ReaderView(c: Context) : View(c) {
             }
             when {
                 e.y < h * .1f -> onTopEdge?.invoke()
-                mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
-                mode == Mode.STACK && abs(e.y - split) < 36f * dp + gutterW / 2 -> onSpine?.invoke()
+                mode == Mode.SIDE && abs(e.x - split) < 36f * dp + gutterW / 2 -> { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onSpine?.invoke() }
+                mode == Mode.STACK && abs(e.y - split) < 36f * dp + gutterW / 2 -> { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onSpine?.invoke() }
                 // Pages turn by hand, as paper does; tapping the edges turns them only if chosen
                 tapTurns && e.x < w * .3f -> turn(-1)
                 tapTurns && e.x > w * .7f -> turn(1)
@@ -1583,15 +1661,12 @@ class ReaderView(c: Context) : View(c) {
             }
             return true
         }
-        override fun onLongPress(e: MotionEvent) {
-            if (!folding && !dragging) beginSelect(e.x, e.y)
-        }
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
             if (grip > 0) return false
             if (abs(vx) > abs(vy) && abs(vx) > 500f * dp / 2.75f) { turn(if (vx < 0) 1 else -1); return true }
             return false
         }
-    })
+    }).apply { setIsLongpressEnabled(false) }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         // A handle held, or a long press still growing the selection: the finger moves its end
@@ -1611,8 +1686,18 @@ class ReaderView(c: Context) : View(c) {
                 return true
             }
         }
+        // A press held on a word became a selection: the rest of that touch is the selection's
+        if (pressed && e.actionMasked != MotionEvent.ACTION_DOWN) {
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) pressed = false
+            return true
+        }
+        when (e.actionMasked) {
+            MotionEvent.ACTION_MOVE -> if (kotlin.math.hypot(e.x - downX, e.y - downY) > slop) removeCallbacks(press)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> removeCallbacks(press)
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                removeCallbacks(press); postDelayed(press, PRESS_MS)
                 downX = e.x; downY = e.y; dragging = false; folding = false; trailN = 0
                 cornerSide = cornerAt(e.x, e.y)
                 velocity?.recycle(); velocity = VelocityTracker.obtain()

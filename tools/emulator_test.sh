@@ -129,6 +129,14 @@ if [ "$(field marks)" = "1" ]; then echo "::notice::dog-ear: page marked"; else 
 adb shell input tap 1470 75; sleep 1      # below the status bar the top-edge drag brought in
 if [ "$(field marks)" = "0" ]; then echo "::notice::dog-ear: a tap smoothed it out"; else echo "::error::tap on the fold did not unmark (marks=$(field marks))"; fail=1; fi
 if crashed; then echo "::error::crash with the dog-ear"; fail=1; fi
+# Selecting: a press held on a word near the right margin of a justified line must take that word,
+# not its neighbour (27 Nov 2026: the layout's measures left justification out)
+adb logcat -c
+adb shell input swipe 1390 700 1390 700 900; sleep 1.5
+adb exec-out screencap -p > shot-select.png
+sel=$(adb logcat -d -s DorsoSelect:I | grep took | tail -1 | sed 's/.*DorsoSelect: //')
+if [ -n "$sel" ]; then echo "::notice::select: $sel"; else echo "::warning::select: nothing taken"; fi
+adb shell input tap 750 1540; sleep 1      # a tap off the selection lets it go
 adb shell input tap 700 60; sleep 1
 adb exec-out screencap -p > shot-trim.png
 adb shell input keyevent KEYCODE_BACK; sleep 2

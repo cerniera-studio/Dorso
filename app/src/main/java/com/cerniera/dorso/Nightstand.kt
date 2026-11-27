@@ -118,8 +118,15 @@ class Nightstand : AppWidgetProvider() {
             // The density of the screen in use now (on the Fold, the app's own resources can carry the other screen's)
             val d = Backdrop.density(c)
             val ground = Family.ground(c, store(c), id)
+            val sizes = sizes(m, id)
+            if (sizes.isEmpty()) return
+            // Sent through the Kit's WidgetBudget (27 Nov 2026): a refusal is redrawn smaller, never left standing
+            com.cerniera.kit.WidgetBudget.send(c, m, id) { build(c, id, sizes, d, look, ground, a) }
+        }
+
+        private fun build(c: Context, id: Int, sizes: List<SizeF>, d: Float, look: WidgetLook, ground: Ground, a: Article?): RemoteViews {
             val map = LinkedHashMap<SizeF, RemoteViews>()
-            for ((i, s) in sizes(m, id).withIndex()) {
+            for ((i, s) in sizes.withIndex()) {
                 val pic = paint(c, s.width, s.height, d, look, ground, a)
                 val rv = RemoteViews(c.packageName, R.layout.nightstand)
                 rv.setImageViewBitmap(R.id.face, pic)
@@ -127,9 +134,7 @@ class Nightstand : AppWidgetProvider() {
                 rv.setOnClickPendingIntent(R.id.root, open(c, a, id, i, s))
                 map[s] = rv
             }
-            if (map.isEmpty()) return
-            runCatching { m.updateAppWidget(id, if (map.size == 1) map.values.first() else RemoteViews(map)) }
-                .onFailure { android.util.Log.w("Dorso", "nightstand $id not drawn", it) }
+            return if (map.size == 1) map.values.first() else RemoteViews(map)
         }
 
         /** Opens the book at your page; the tap's bounds teach the widget where it sits. */
@@ -186,7 +191,7 @@ class Nightstand : AppWidgetProvider() {
          *  - Small: the jacket, full bleed, with a band of the finish at the foot.
          */
         fun paint(c: Context, w: Float, h: Float, density: Float, look: WidgetLook, ground: Ground, a: Article?): Bitmap {
-            val d = min(density, sqrt(1_600_000f / (w * h)))
+            val d = min(density, sqrt(1_600_000f * com.cerniera.kit.WidgetBudget.scale(c) / (w * h)))
             val bmp = Bitmap.createBitmap(max(1, (w * d).toInt()), max(1, (h * d).toInt()), Bitmap.Config.ARGB_8888)
             val cv = Canvas(bmp); cv.scale(d, d)
             val radius = min(look.radius, min(w, h) / 2)
@@ -257,7 +262,10 @@ class Nightstand : AppWidgetProvider() {
                 else -> {
                     // ROW and STRIP: the book at the left, its words beside it
                     var bh = h - 2 * pad; var bw = bh * ASPECT
-                    if (bw > w * .42f) { bw = w * .42f; bh = bw / ASPECT }
+                    // The words keep at least 110 dp beside the book (27 Nov 2026): at 192 x 164 on the cover
+                    // the book took so much that the label, byline and time read "UP NE…", "Cernier…", "3 min r…"
+                    val maxBw = minOf(w * .42f, (w - 2 * pad - 16f * k - 110f * k).coerceAtLeast(w * .26f))
+                    if (bw > maxBw) { bw = maxBw; bh = bw / ASPECT }
                     val book = RectF(pad, (h - bh) / 2, pad + bw, (h + bh) / 2)
                     drawBook(c, cv, book, d, a)
                     val x = book.right + max(2.5f, bw * .045f) + 16f * k; val colW = w - x - pad
@@ -268,7 +276,7 @@ class Nightstand : AppWidgetProvider() {
                     // The title grows to fill the column between the label and the foot
                     val t = Grammar.title(c, a.title, surface.ink(x + colW / 2, h / 2), colW, footTop - y - byH, k, 5, largest = 28f)
                     val end = t.draw(cv, x, y)
-                    if (by != null && end + byH <= footTop + 1f) cv.drawText(Grammar.fit(by, bp, colW), x, end + 6f * k + Grammar.cap(bp), bp)
+                    if (by != null && end + byH <= footTop + 1f) Grammar.words(by, bp, colW)?.let { cv.drawText(it, x, end + 6f * k + Grammar.cap(bp), bp) }
                     metaLine(cv, meta, mp, x, metaBase, colW)
                     Grammar.line(cv, surface, x, lineY, colW, a.progress, k)
                 }
@@ -280,7 +288,8 @@ class Nightstand : AppWidgetProvider() {
         private fun metaLine(cv: Canvas, parts: List<String>, p: TextPaint, x: Float, baseline: Float, width: Float) {
             var s = parts.joinToString("  ·  ")
             if (p.measureText(s) > width) s = parts.first()
-            cv.drawText(TextUtils.ellipsize(s, p, width, TextUtils.TruncateAt.END).toString(), x, baseline, p)
+            // Whole words: "3 min read" or nothing, never "3 min r…" (27 Nov 2026)
+            (Grammar.words(s, p, width) ?: return).let { cv.drawText(it, x, baseline, p) }
         }
 
         /**

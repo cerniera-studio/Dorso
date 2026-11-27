@@ -126,8 +126,10 @@ class Nightstand : AppWidgetProvider() {
 
         private fun build(c: Context, id: Int, sizes: List<SizeF>, d: Float, look: WidgetLook, ground: Ground, a: Article?): RemoteViews {
             val map = LinkedHashMap<SizeF, RemoteViews>()
-            for ((i, s) in sizes.withIndex()) {
-                val pic = paint(c, s.width, s.height, d, look, ground, a)
+            // Plus the sizes' shared part, for a launcher stack whose real box none of them fits (27 Nov 2026)
+            for ((i, e) in com.cerniera.kit.WidgetSizes.withShared(sizes).withIndex()) {
+                val (s, up) = e
+                val pic = paint(c, s.width, s.height, d * up, look, ground, a)
                 val rv = RemoteViews(c.packageName, R.layout.nightstand)
                 rv.setImageViewBitmap(R.id.face, pic)
                 rv.setContentDescription(R.id.face, a?.let { "${it.title}. ${left(it)}" } ?: "Dorso. Share a long read to begin.")

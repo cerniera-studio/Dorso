@@ -14,13 +14,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
-import android.net.Uri
 import android.os.Bundle
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.SizeF
 import android.widget.RemoteViews
 import com.cerniera.kit.Backdrop
+import com.cerniera.kit.Family
 import com.cerniera.kit.Finish
 import com.cerniera.kit.Grammar
 import com.cerniera.kit.Ground
@@ -66,7 +66,6 @@ class Nightstand : AppWidgetProvider() {
     companion object {
         const val SEAT_WIDGET = "dorso.widget"
         const val SEAT_SIZE = "dorso.seat.size"
-        private const val AUTHORITY = "com.fergusonconsultancy.foldwidgets.look"
 
         private fun store(c: Context) = c.getSharedPreferences("nightstand", Context.MODE_PRIVATE)
 
@@ -79,7 +78,7 @@ class Nightstand : AppWidgetProvider() {
             Thread {
                 runCatching {
                     Backdrop.invalidate()
-                    take(app, m, ids)
+                    Family.seats(app, store(app), ids) { sizes(m, it) }
                     val a = current(app)
                     val look = look(app)
                     for (id in ids) draw(app, m, id, a, look)
@@ -94,76 +93,13 @@ class Nightstand : AppWidgetProvider() {
         }
 
         /**
-         * Fold Widgets' look when it is installed (the finish and corners chosen there, and the
-         * images chosen for each screen's glass, which the Kit's Backdrop reads from this store);
-         * otherwise Vetro at radius 24.
+         * Fold Widgets' look: the finish and corners chosen there, and the picture behind its glass,
+         * read through the Kit's Family (26 Nov 2026), the one code every Cerniera widget uses. If
+         * Fold Widgets can't answer for a moment the last look it gave is kept; without it, Vetro at 24.
          */
         fun look(c: Context): WidgetLook {
-            var look = WidgetLook(Finish.VETRO, 24f)
-            var images = mapOf<String, String?>("cover" to null, "main" to null)
-            runCatching {
-                c.contentResolver.query(Uri.parse("content://$AUTHORITY/look"), null, null, null, null)?.use { cur ->
-                    if (cur.moveToFirst()) {
-                        val f = runCatching { Finish.valueOf(cur.getString(cur.getColumnIndexOrThrow("finish"))) }.getOrDefault(Finish.VETRO)
-                        look = WidgetLook(f, cur.getInt(cur.getColumnIndexOrThrow("radius")).toFloat())
-                        images = mapOf(
-                            "cover" to if (cur.getInt(cur.getColumnIndexOrThrow("image_cover")) == 1) "content://$AUTHORITY/image/cover" else null,
-                            "main" to if (cur.getInt(cur.getColumnIndexOrThrow("image_main")) == 1) "content://$AUTHORITY/image/main" else null)
-                    }
-                }
-            }
-            store(c).edit().apply { images.forEach { (s, u) -> if (u == null) remove("image_$s") else putString("image_$s", u) } }.apply()
-            return look
-        }
-
-        /** The launcher's placing and tint of the wallpaper behind widget [id], when live mode saw them. */
-        private fun live(c: Context, id: Int): Backdrop.LiveView? = runCatching {
-            val v = store(c).getString("live_$id", null)!!.split(",")
-            Backdrop.LiveView(v[0].toFloat(), v[1].toFloat(), floatArrayOf(v[2].toFloat(), v[3].toFloat(), v[4].toFloat()), v[5].toInt(), v[6].toInt())
-        }.getOrNull()
-
-        /**
-         * Takes up where Fold Widgets' live mode last saw Dorso's widgets, if that is new: each seen
-         * place goes to the Dorso widget nearest its last known place, else closest in size.
-         */
-        private fun take(c: Context, m: AppWidgetManager, ids: IntArray) {
-            class Seen(val l: Float, val t: Float, val w: Float, val h: Float, val sw: Int, val sh: Int, val live: Backdrop.LiveView?)
-            val seen = ArrayList<Seen>(); var at = 0L
-            runCatching {
-                c.contentResolver.query(Uri.parse("content://$AUTHORITY/seats/${c.packageName}"), null, null, null, null)?.use { cur ->
-                    fun f(n: String) = cur.getFloat(cur.getColumnIndexOrThrow(n))
-                    fun i(n: String) = cur.getInt(cur.getColumnIndexOrThrow(n))
-                    while (cur.moveToNext()) {
-                        // An older Fold Widgets has no package column and passes on Nodo's places only
-                        val pk = cur.getColumnIndex("package")
-                        if (pk < 0 || cur.getString(pk) != c.packageName) continue
-                        val sw = i("screen_w"); val sh = i("screen_h")
-                        val live = if (i("live") == 1) Backdrop.LiveView(f("ox"), f("oy"), floatArrayOf(f("gain_r"), f("gain_g"), f("gain_b")), sw, sh) else null
-                        seen += Seen(f("left"), f("top"), f("width"), f("height"), sw, sh, live)
-                        at = cur.getLong(cur.getColumnIndexOrThrow("at"))
-                    }
-                }
-            }
-            val st = store(c)
-            if (seen.isEmpty() || st.getLong("seatsAt", 0L) == at) return
-            val screen = Backdrop.screenSize(c)
-            val here = seen.filter { it.sw == screen.x && it.sh == screen.y }
-            if (here.isEmpty()) return
-            val d = Backdrop.density(c)
-            val claimed = HashSet<Int>(); val e = st.edit()
-            for (s in here) {
-                fun distance(id: Int): Float {
-                    val old = Backdrop.seat(st, id)
-                    if (old != null && old.screenW == s.sw && old.screenH == s.sh)
-                        return Math.abs(old.left - s.l) + Math.abs(old.top - s.t) + 3f * (Math.abs(old.width - s.w) + Math.abs(old.height - s.h))
-                    return 400f + 3f * (sizes(m, id).minOfOrNull { Math.abs(it.width * d - s.w) + Math.abs(it.height * d - s.h) } ?: 400f)
-                }
-                val id = ids.filter { it !in claimed }.minByOrNull { distance(it) } ?: break
-                claimed += id
-                e.putString("seat_$id", Backdrop.Seat(s.l, s.t, s.w, s.h, s.sw, s.sh, true).encode())
-                s.live?.let { v -> val g = v.gain ?: floatArrayOf(1f, 1f, 1f); e.putString("live_$id", listOf(v.ox, v.oy, g[0], g[1], g[2], v.screenW, v.screenH).joinToString(",")) } ?: e.remove("live_$id")
-            }
-            e.putLong("seatsAt", at).apply()
+            val l = Family.look(c, store(c))
+            return WidgetLook(l.finish, l.radius.toFloat())
         }
 
         /** The sizes the launcher shows this widget at (one per orientation), in dp. */
@@ -181,7 +117,7 @@ class Nightstand : AppWidgetProvider() {
         private fun draw(c: Context, m: AppWidgetManager, id: Int, a: Article?, look: WidgetLook) {
             // The density of the screen in use now (on the Fold, the app's own resources can carry the other screen's)
             val d = Backdrop.density(c)
-            val ground = Backdrop.ground(c, store(c), id, live(c, id))
+            val ground = Family.ground(c, store(c), id)
             val map = LinkedHashMap<SizeF, RemoteViews>()
             for ((i, s) in sizes(m, id).withIndex()) {
                 val pic = paint(c, s.width, s.height, d, look, ground, a)

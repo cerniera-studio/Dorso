@@ -118,8 +118,15 @@ class Nightstand : AppWidgetProvider() {
             // The density of the screen in use now (on the Fold, the app's own resources can carry the other screen's)
             val d = Backdrop.density(c)
             val ground = Family.ground(c, store(c), id)
+            val sizes = sizes(m, id)
+            if (sizes.isEmpty()) return
+            // Sent through the Kit's WidgetBudget (27 Nov 2026): a refusal is redrawn smaller, never left standing
+            com.cerniera.kit.WidgetBudget.send(c, m, id) { build(c, id, sizes, d, look, ground, a) }
+        }
+
+        private fun build(c: Context, id: Int, sizes: List<SizeF>, d: Float, look: WidgetLook, ground: Ground, a: Article?): RemoteViews {
             val map = LinkedHashMap<SizeF, RemoteViews>()
-            for ((i, s) in sizes(m, id).withIndex()) {
+            for ((i, s) in sizes.withIndex()) {
                 val pic = paint(c, s.width, s.height, d, look, ground, a)
                 val rv = RemoteViews(c.packageName, R.layout.nightstand)
                 rv.setImageViewBitmap(R.id.face, pic)
@@ -127,9 +134,7 @@ class Nightstand : AppWidgetProvider() {
                 rv.setOnClickPendingIntent(R.id.root, open(c, a, id, i, s))
                 map[s] = rv
             }
-            if (map.isEmpty()) return
-            runCatching { m.updateAppWidget(id, if (map.size == 1) map.values.first() else RemoteViews(map)) }
-                .onFailure { android.util.Log.w("Dorso", "nightstand $id not drawn", it) }
+            return if (map.size == 1) map.values.first() else RemoteViews(map)
         }
 
         /** Opens the book at your page; the tap's bounds teach the widget where it sits. */
@@ -186,7 +191,7 @@ class Nightstand : AppWidgetProvider() {
          *  - Small: the jacket, full bleed, with a band of the finish at the foot.
          */
         fun paint(c: Context, w: Float, h: Float, density: Float, look: WidgetLook, ground: Ground, a: Article?): Bitmap {
-            val d = min(density, sqrt(1_600_000f / (w * h)))
+            val d = min(density, sqrt(1_600_000f * com.cerniera.kit.WidgetBudget.scale(c) / (w * h)))
             val bmp = Bitmap.createBitmap(max(1, (w * d).toInt()), max(1, (h * d).toInt()), Bitmap.Config.ARGB_8888)
             val cv = Canvas(bmp); cv.scale(d, d)
             val radius = min(look.radius, min(w, h) / 2)
